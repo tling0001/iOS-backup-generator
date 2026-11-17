@@ -26,12 +26,24 @@ The sanitized archive profiles include all app bundle IDs listed by each archive
 - Batch restore with basic device-family and OS preflight checks and `idevicebackup2 --copy` so the source backup is not modified by restore.
 - Generate deployment project app lists and basic Wi-Fi `.mobileconfig` profiles.
 
-## Requirements and launch
+## Downloadable desktop builds
+
+GitHub Actions builds standalone applications for:
+
+- Windows x64 (`.exe`)
+- macOS Intel (`.app`, x86_64)
+- macOS Apple Silicon (`.app`, arm64)
+
+Open the repository's **Actions → Build desktop applications** workflow and download the artifact matching your computer. Each build is self-contained and includes the app catalog JSON files. The workflow runs on pushes, pull requests, version tags, and manual dispatches. The macOS archive contains an `.app` bundle. These builds are unsigned; macOS may require approval in Privacy & Security before opening.
+
+## Requirements and source launch
 
 - Python 3.10+ with Tkinter.
-- libimobiledevice tools: `idevicebackup2`, `idevice_id`, and preferably `ideviceinfo`.
-- Windows: run `run_windows.bat`.
-- macOS: run `chmod +x run_macos.command && ./run_macos.command`.
+- libimobiledevice tools: `idevicebackup2`, `idevice_id`, and preferably `ideviceinfo`. These external command-line tools are **not bundled** in the desktop executable.
+- Windows source launch: run `run_windows.bat`.
+- macOS source launch: `chmod +x run_macos.command && ./run_macos.command`.
+
+The packaged app does not need Python installed, but it still needs compatible libimobiledevice tools installed and configured.
 
 ## Manifest.db and editing safety
 
