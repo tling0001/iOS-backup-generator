@@ -153,6 +153,7 @@ class Generator(tk.Tk):
                     raise RuntimeError('Workspace verification failed for '+name+'; original remains untouched.')
             self.logmsg('Verified independent workspace: '+str(dest))
             self.logmsg('Native backup files were preserved byte-for-byte. Direct payload editing is intentionally blocked.')
+        self.start(work)
     def pathrow(self,f,r,label,var,cmd):
         ttk.Label(f,text=label).grid(row=r,column=0,sticky='w',pady=3); line=ttk.Frame(f); line.grid(row=r,column=1,sticky='ew'); line.columnconfigure(0,weight=1); ttk.Entry(line,textvariable=var).grid(row=0,column=0,sticky='ew'); ttk.Button(line,text='Browse',command=cmd).grid(row=0,column=1,padx=5)
     def pick_dir(self,var):
