@@ -1,29 +1,30 @@
 # iOS Backup Generator
 
-A Python/Tkinter desktop utility for Windows and macOS to create genuine iPhone/iPad backups through libimobiledevice, inspect existing Apple backup folders, select device-model targets for deployment planning, and prepare repeatable app/configuration-profile projects.
+A Windows/macOS desktop utility for creating genuine iPhone/iPad backups through libimobiledevice, inspecting Apple backup folders, preparing deployment app lists, and making verified backup workspaces.
 
 ## Based on the supplied archives
 
-The two supplied ZIP archives were inspected as native Apple backup folders. Both identify **iPad (10th generation), ProductType `iPad13,18`**, backup format **3.3**, and `SnapshotState=finished`. Their metadata differs as follows:
+The two supplied archives are native Apple backup folders. Both identify **iPad (10th generation), ProductType `iPad13,18`**, backup format **3.3**, and `SnapshotState=finished`.
 
-| Sample | Product Version | Encrypted | IsFullBackup |
+| Archive | Product Version | Encrypted | IsFullBackup |
 |---|---:|---:|---:|
-| Archive A | 26.6.1 | Yes | false |
-| Archive B | 18.0.1 | Yes | false |
+| A | 26.6.1 | Yes | false |
+| B | 18.0.1 | Yes | false |
 
-The sanitized `archive_profiles.json` preserves the model, OS version, backup metadata, and installed app bundle IDs from both archives. Personal device names, serial numbers, UDIDs, passwords, and backup contents are not included. The Deployment Project tab can load either sample's app list and automatically set the corresponding iPad model and OS planning values.
+The sanitized archive profiles include all app bundle IDs listed by each archive's `Info.plist` `Installed Applications` and `Applications` metadata. The merged app list is automatically selected when the program opens. It currently contains 11 unique bundle IDs across the two archives, including `com.apple.TestFlight`. These are identifiers observed in the archives, not installers or app binaries. Built-in iPadOS system apps are not necessarily represented as installable backup applications.
 
 ## Features
 
-- Device inventory through `idevice_id` and `ideviceinfo`.
-- Model selector with iPhone and iPad examples in `device_models.json`.
-- Target iOS/iPadOS version selector.
-- Create native device backups using `idevicebackup2`, including a full-backup request.
-- Optional encryption setting change; default is to leave the device setting unchanged.
-- Inspect native backup folders and ZIP-wrapped backup folders, including product model, OS, encryption, snapshot state, and full-backup flag.
-- Batch restore to selected connected devices with basic OS-version and iPhone/iPad-family preflight checks.
-- Generate a deployment project with app bundle IDs and target model/OS metadata.
-- Generate a basic Wi-Fi `.mobileconfig` payload.
+- Device inventory using `idevice_id` and `ideviceinfo`.
+- iPhone/iPad model catalog and target iOS/iPadOS planning selector.
+- Automatically preloads the merged app list from both supplied archives; individual archive profiles remain selectable.
+- Create native device backups with `idevicebackup2`; the device backup service creates the native `Manifest.db`.
+- Verify `Manifest.db` presence and size; run SQLite `quick_check` and expected-table checks when it is a readable SQLite database.
+- For encrypted backups, identify `Manifest.db` as opaque and preserve it byte-for-byte; no unsupported attempt is made to parse or rebuild encrypted database bytes.
+- Inspect backup metadata, encryption, snapshot state, and full-backup flag.
+- Create an independent backup workspace and verify key files are byte-identical to the source.
+- Batch restore with basic device-family and OS preflight checks and `idevicebackup2 --copy` so the source backup is not modified by restore.
+- Generate deployment project app lists and basic Wi-Fi `.mobileconfig` profiles.
 
 ## Requirements and launch
 
@@ -31,20 +32,21 @@ The sanitized `archive_profiles.json` preserves the model, OS version, backup me
 - libimobiledevice tools: `idevicebackup2`, `idevice_id`, and preferably `ideviceinfo`.
 - Windows: run `run_windows.bat`.
 - macOS: run `chmod +x run_macos.command && ./run_macos.command`.
-- No third-party Python packages are required.
 
-## Native backup validity and limitations
+## Manifest.db and editing safety
 
-A valid Apple backup cannot be manufactured offline from a model number and an OS version. It contains device-generated manifests, file records, and (when encrypted) keybag material. The program therefore only creates restorable backup data through a real connected device. A deployment project is a separate template; an app bundle-ID list does not install apps. Use an authorized MDM/Apple Configurator workflow for app deployment and managed configuration.
+A valid Apple backup's `Manifest.db` is not a generic app list. It is generated as part of a real device backup and contains file/domain records tied to the payload files and backup metadata. For encrypted backups, the database is encrypted/opaque until processed with the appropriate backup decryption workflow. Fabricating a new SQLite database from bundle IDs or changing manifest rows without updating the corresponding payloads can produce a backup that looks plausible but cannot be restored.
 
-The model and OS selectors are **planning/preflight metadata only**. They do not alter device hardware, install/downgrade iOS, or rewrite a backup's source identity. Restore compatibility is determined by the actual source backup and target device; basic checks here are not a guarantee that every cross-device restore is supported. Backups may contain device-specific data and should be treated as sensitive.
+Accordingly, this version **does not claim to regenerate a native Manifest.db offline or perform arbitrary in-place payload edits**. It verifies the database created by `idevicebackup2`, and its workspace function makes an independent byte-verified copy while leaving the original untouched. The workspace is a safe inspection/rollback boundary, not yet a general-purpose editor for changing app data inside an Apple backup. The UI intentionally blocks direct edits that could invalidate the manifest.
 
-The two supplied examples both have `IsFullBackup=false`. Their snapshots are marked finished, but they should not be represented as full backups. The app will display this distinction when inspecting a source backup.
+The app list is a deployment-planning artifact only. Bundle IDs do not install apps. Use an authorized MDM/Apple Configurator workflow for actual app deployment and managed configuration.
 
-## Password handling
+## OS/model compatibility
 
-The app keeps the entered password in process memory and passes it to libimobiledevice using its documented `BACKUP_PASSWORD` environment variable. It does not save passwords to project files or place them in command-line arguments. Avoid using a shared computer and clear the password field when finished.
+Model and OS selectors are planning values; they do not change device hardware, install/downgrade iOS, or rewrite source backup metadata. Restore compatibility depends on the actual source backup and target device. The preflight checks are conservative warnings, not a guarantee that every cross-device restore is supported.
 
-## Safety
+## Passwords and safety
 
-Restoring replaces data on the target device. Make a current backup of every target before starting a restore, confirm device ownership/authorization, and test with a non-production device first. The current app has not been validated against a physical iPad or Finder/Apple Devices restore workflow; treat it as an initial implementation until that end-to-end test is completed.
+Backup passwords are kept in process memory and passed through the documented `BACKUP_PASSWORD` environment variable. They are not saved in project files or command-line arguments. Restore overwrites target data; back up every target first, confirm authorization, and test with a non-production device.
+
+The supplied archives are encrypted and marked `IsFullBackup=false`. The app has not yet been validated end-to-end with physical devices and Finder/Apple Devices. Do not treat a syntax/metadata check as proof of restore success.
