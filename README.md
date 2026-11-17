@@ -22,7 +22,7 @@ The sanitized archive profiles include all app bundle IDs listed by each archive
 - Verify `Manifest.db` presence and size; run SQLite `quick_check` and expected-table checks when it is a readable SQLite database.
 - For encrypted backups, identify `Manifest.db` as opaque and preserve it byte-for-byte; no unsupported attempt is made to parse or rebuild encrypted database bytes.
 - Inspect backup metadata, encryption, snapshot state, and full-backup flag.
-- Create an independent backup workspace and verify key files are byte-identical to the source.
+- Create an independent backup workspace and verify the complete file inventory and every copied file byte-for-byte against the source.
 - Batch restore with basic device-family and OS preflight checks and `idevicebackup2 --copy` so the source backup is not modified by restore.
 - Generate deployment project app lists and basic Wi-Fi `.mobileconfig` profiles.
 
@@ -37,7 +37,7 @@ The sanitized archive profiles include all app bundle IDs listed by each archive
 
 A valid Apple backup's `Manifest.db` is not a generic app list. It is generated as part of a real device backup and contains file/domain records tied to the payload files and backup metadata. For encrypted backups, the database is encrypted/opaque until processed with the appropriate backup decryption workflow. Fabricating a new SQLite database from bundle IDs or changing manifest rows without updating the corresponding payloads can produce a backup that looks plausible but cannot be restored.
 
-Accordingly, this version **does not claim to regenerate a native Manifest.db offline or perform arbitrary in-place payload edits**. It verifies the database created by `idevicebackup2`, and its workspace function makes an independent byte-verified copy while leaving the original untouched. The workspace is a safe inspection/rollback boundary, not yet a general-purpose editor for changing app data inside an Apple backup. The UI intentionally blocks direct edits that could invalidate the manifest.
+Accordingly, this version **does not claim to regenerate a native Manifest.db offline or perform arbitrary in-place payload edits**. It verifies the database created by `idevicebackup2`, and its workspace function makes an independent copy, compares the full file inventory and SHA-256 of every file, and leaves the original untouched. The workspace is a safe inspection/rollback boundary, not yet a general-purpose editor for changing app data inside an Apple backup. The UI intentionally blocks direct edits that could invalidate the manifest.
 
 The app list is a deployment-planning artifact only. Bundle IDs do not install apps. Use an authorized MDM/Apple Configurator workflow for actual app deployment and managed configuration.
 
