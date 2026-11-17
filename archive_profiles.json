@@ -1,0 +1,40 @@
+{
+  "source": "User-provided native backup archive metadata; personal device names, serial numbers, UDIDs, and backup contents excluded.",
+  "profiles": [
+    {
+      "label": "iPad 10th generation — iPadOS 18.0.1 (sample archive)",
+      "product_name": "iPad (10th generation)",
+      "product_type": "iPad13,18",
+      "product_version": "18.0.1",
+      "backup_format": "3.3",
+      "encrypted": true,
+      "is_full_backup": false,
+      "snapshot_state": "finished",
+      "installed_apps": [
+        "com.panareadigital.NearpodTeacher",
+        "com.popplet.popplet",
+        "com.air-watch.agent",
+        "com.air-watch.secure.browser"
+      ]
+    },
+    {
+      "label": "iPad 10th generation — iPadOS 26.6.1 (sample archive)",
+      "product_name": "iPad (10th generation)",
+      "product_type": "iPad13,18",
+      "product_version": "26.6.1",
+      "backup_format": "3.3",
+      "encrypted": true,
+      "is_full_backup": false,
+      "snapshot_state": "finished",
+      "installed_apps": [
+        "com.apple.TestFlight",
+        "com.overdrive.dewey",
+        "com.google.chrome.ios",
+        "com.kdt.livecontainer.9U54KY7847",
+        "com.openai.chat",
+        "com.schoologytauri.app.9U54KY7847",
+        "com.launchplan.mobile"
+      ]
+    }
+  ]
+}
