@@ -1,0 +1,91 @@
+name: Build desktop applications
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows x64
+            artifact: ios-backup-generator-windows-x64
+            data_separator: ";"
+          - os: macos-15-intel
+            label: macOS Intel
+            artifact: ios-backup-generator-macos-x64
+            data_separator: ":"
+          - os: macos-15
+            label: macOS Apple Silicon
+            artifact: ios-backup-generator-macos-arm64
+            data_separator: ":"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install packager
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Compile and validate source
+        run: |
+          python -m py_compile app.py
+          python -m json.tool device_models.json > /dev/null
+          python -m json.tool archive_profiles.json > /dev/null
+
+      - name: Build standalone application
+        shell: bash
+        run: |
+          python -m PyInstaller \
+            --noconfirm \
+            --clean \
+            --windowed \
+            --onefile \
+            --name "iOS Backup Generator" \
+            --add-data "device_models.json${{ matrix.data_separator }}." \
+            --add-data "archive_profiles.json${{ matrix.data_separator }}." \
+            app.py
+
+      - name: Prepare Windows release archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/release | Out-Null
+          Copy-Item "dist/iOS Backup Generator.exe" "dist/release/"
+          Compress-Archive -Path "dist/iOS Backup Generator.exe" -DestinationPath "dist/release/iOS-Backup-Generator-Windows-x64.zip" -Force
+
+      - name: Prepare macOS application archive
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p dist/release
+          ditto -c -k --sequesterRsrc --keepParent "dist/iOS Backup Generator" "dist/release/iOS-Backup-Generator-${{ matrix.artifact }}.zip"
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/release/*
+          if-no-files-found: error
+          retention-days: 30
