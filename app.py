@@ -30,13 +30,22 @@ def inspect(path):
     if not (b/'Manifest.db').is_file(): raise ValueError('Manifest.db is missing.')
     return b,info,manifest,status
 
+def sha256_file(path, chunk_size=1024 * 1024):
+    """Hash large backup files without loading them fully into memory."""
+    digest=hashlib.sha256()
+    with open(path,'rb') as stream:
+        for chunk in iter(lambda: stream.read(chunk_size), b''):
+            digest.update(chunk)
+    return digest.digest()
+
+
 def validate_manifest(backup, encrypted):
     db=backup/'Manifest.db'
     if not db.is_file() or db.stat().st_size < 100:
         raise ValueError('Manifest.db is missing or unexpectedly small.')
     with db.open('rb') as f: header=f.read(16)
     if header == b'SQLite format 3\x00':
-        con=sqlite3.connect(f'file:{db.as_posix()}?mode=ro',uri=True)
+        con=sqlite3.connect(db.resolve().as_uri()+'?mode=ro',uri=True)
         try:
             result=con.execute('PRAGMA quick_check').fetchone()
             if not result or result[0] != 'ok': raise ValueError('Manifest.db failed SQLite quick_check.')
@@ -59,7 +68,7 @@ class Generator(tk.Tk):
         style.configure('TNotebook.Tab',padding=(14,8))
         style.configure('TLabelframe.Label',font=('Segoe UI',10,'bold'))
         self.models=asset('device_models.json',{'models':[]})['models']; self.samples=asset('archive_profiles.json',{'profiles':[]})['profiles']
-        self.q=queue.Queue(); self.worker=None; self.devices=[]; self.apps=[]
+        self.q=queue.Queue(); self.worker=None; self.devices=[]; self.apps=[]; self.active_password=''
         self.backup_tool=tk.StringVar(value=exe('idevicebackup2') or ''); self.id_tool=tk.StringVar(value=exe('idevice_id') or '')
         self.out=tk.StringVar(value=str(Path.home()/'iOS Backups')); self.source=tk.StringVar(); self.password=tk.StringVar()
         self.model=tk.StringVar(value='iPad (10th generation) — iPad13,18'); self.osver=tk.StringVar(value='26.6.1')
@@ -153,7 +162,7 @@ class Generator(tk.Tk):
                 raise RuntimeError('Workspace file inventory differs from source; original remains untouched.')
             for rel in source_files:
                 original=b/rel; copied=dest/rel
-                if original.stat().st_size != copied.stat().st_size or hashlib.sha256(original.read_bytes()).digest()!=hashlib.sha256(copied.read_bytes()).digest():
+                if original.stat().st_size != copied.stat().st_size or sha256_file(original)!=sha256_file(copied):
                     raise RuntimeError('Workspace byte verification failed for '+str(rel)+'; original remains untouched.')
             self.logmsg(f'Verified {len(source_files)} files byte-for-byte in workspace: '+str(dest))
             self.logmsg('Original backup remains untouched. Direct payload editing is intentionally blocked until manifest-aware editing is supported.')
@@ -191,7 +200,7 @@ class Generator(tk.Tk):
         self.worker=threading.Thread(target=go,daemon=True); self.worker.start()
     def run(self,args):
         self.logmsg('$ '+' '.join(map(str,args))); env=os.environ.copy()
-        if self.password.get(): env['BACKUP_PASSWORD']=self.password.get()
+        if self.active_password: env['BACKUP_PASSWORD']=self.active_password
         p=subprocess.Popen(list(map(str,args)),stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace',env=env)
         for line in p.stdout:
             if line.strip(): self.logmsg(line.rstrip())
@@ -241,11 +250,12 @@ class Generator(tk.Tk):
     def create_project(self):
         dest=Path(self.project.get()).expanduser()
         if dest.exists() and any(dest.iterdir()): dest=dest/(safe(self.project_name.get())+'_'+datetime.now().strftime('%Y%m%d_%H%M%S'))
+        project_name=self.project_name.get(); model=self.model.get(); osver=self.osver.get(); apps=list(self.apps)
         def work():
             dest.mkdir(parents=True,exist_ok=True)
-            (dest/'project.json').write_text(json.dumps({'name':self.project_name.get(),'target_model':self.model.get(),'target_os_version':self.osver.get(),'created_utc':datetime.now(timezone.utc).isoformat()},indent=2))
-            (dest/'apps.json').write_text(json.dumps({'apps':self.apps},indent=2))
-            (dest/'README.md').write_text('# '+self.project_name.get()+'\n\nDeployment template only. It is not a synthetic Apple backup.\n')
+            (dest/'project.json').write_text(json.dumps({'name':project_name,'target_model':model,'target_os_version':osver,'created_utc':datetime.now(timezone.utc).isoformat()},indent=2))
+            (dest/'apps.json').write_text(json.dumps({'apps':apps},indent=2))
+            (dest/'README.md').write_text('# '+project_name+'\n\nDeployment template only. It is not a synthetic Apple backup.\n')
             self.logmsg('Created deployment project: '+str(dest))
         self.start(work)
     def make_profile(self):
@@ -267,20 +277,24 @@ class Generator(tk.Tk):
         if not messagebox.askyesno(APP,f'Create native backups for {len(ds)} selected devices?'): return
         out=Path(self.out.get()).expanduser(); mode=self.enc.get()
         if mode!='Leave device setting unchanged' and not self.password.get(): messagebox.showerror(APP,'Enter the current/new backup password first.'); return
+        full=bool(self.full.get()); self.active_password=self.password.get()
         def work():
-            out.mkdir(parents=True,exist_ok=True)
-            for d in ds:
-                folder=out/(safe(d['name'])+'_'+d['udid']+'_'+datetime.now().strftime('%Y%m%d_%H%M%S')); folder.mkdir()
-                if mode!='Leave device setting unchanged': self.run([self.backup_tool.get(),'-u',d['udid'],'encryption','on' if mode=='Enable encryption' else 'off'])
-                args=[self.backup_tool.get(),'-u',d['udid'],'backup']+(['--full'] if self.full.get() else [])+[str(folder)]; self.run(args)
-                b=locate(folder); _,inf,man,st=inspect(b)
-                report=validate_manifest(b, bool(man.get('IsEncrypted')))
-                self.logmsg('Manifest.db generated and checked: '+str(report))
-                if st.get('SnapshotState')!='finished': raise RuntimeError('Backup did not reach SnapshotState=finished.')
-                self.logmsg(f"Verified {d['udid']}: {inf.get('Product Type')} / {inf.get('Product Version')} / encrypted={man.get('IsEncrypted')}")
+            try:
+                out.mkdir(parents=True,exist_ok=True)
+                for d in ds:
+                    folder=out/(safe(d['name'])+'_'+d['udid']+'_'+datetime.now().strftime('%Y%m%d_%H%M%S')); folder.mkdir()
+                    if mode!='Leave device setting unchanged': self.run([self.backup_tool.get(),'-u',d['udid'],'encryption','on' if mode=='Enable encryption' else 'off'])
+                    args=[self.backup_tool.get(),'-u',d['udid'],'backup']+(['--full'] if full else [])+[str(folder)]; self.run(args)
+                    b=locate(folder); _,inf,man,st=inspect(b)
+                    report=validate_manifest(b, bool(man.get('IsEncrypted')))
+                    self.logmsg('Manifest.db generated and checked: '+str(report))
+                    if st.get('SnapshotState')!='finished': raise RuntimeError('Backup did not reach SnapshotState=finished.')
+                    self.logmsg(f"Verified {d['udid']}: {inf.get('Product Type')} / {inf.get('Product Version')} / encrypted={man.get('IsEncrypted')}")
+            finally:
+                self.active_password=''
         self.start(work)
-    def resolve(self):
-        p=Path(self.source.get()).expanduser()
+    def resolve(self, source_value=None):
+        p=Path(source_value if source_value is not None else self.source.get()).expanduser()
         if p.is_file() and zipfile.is_zipfile(p):
             t=Path(tempfile.mkdtemp(prefix='iosbg-'))
             with zipfile.ZipFile(p) as z:
@@ -298,19 +312,23 @@ class Generator(tk.Tk):
         ds=self.selected()
         if not ds or not self.source.get(): messagebox.showwarning(APP,'Select devices and a source backup.'); return
         if not messagebox.askyesno(APP,'Restore overwrites data on every selected device. Back up targets first. Continue?',icon='warning'): return
+        source_value=self.source.get(); password=self.password.get(); self.active_password=password
         def work():
-            b,tmp=self.resolve(); _,i,m,s=inspect(b)
-            if s.get('SnapshotState')!='finished': raise ValueError('Source backup is not marked finished.')
-            if m.get('IsEncrypted') and not self.password.get(): raise ValueError('Enter the source backup password.')
-            ver=tuple(int(x) for x in str(i.get('Product Version','0')).split('.')[:3]); family=str(i.get('Product Type',''))
-            for d in ds:
-                dv=tuple(int(x) for x in str(d.get('version','0')).split('.')[:3]) if d.get('version') else ()
-                if not dv or dv<ver: raise ValueError(f"Target {d['udid']} is older/unknown OS than source {i.get('Product Version')}; no restore started.")
-                if family.startswith('iPad') and not d.get('product','').startswith('iPad'): raise ValueError('iPad backup cannot be applied to a non-iPad target.')
-                if family.startswith('iPhone') and not d.get('product','').startswith('iPhone'): raise ValueError('iPhone backup cannot be applied to a non-iPhone target.')
-            source_udid=str(i.get('Target Identifier') or i.get('Unique Identifier') or b.name)
-            for d in ds: self.run([self.backup_tool.get(),'-u',d['udid'],'-s',source_udid,'restore','--copy',str(b.parent)])
-            if tmp: shutil.rmtree(tmp,ignore_errors=True)
+            try:
+                b,tmp=self.resolve(source_value); _,i,m,s=inspect(b)
+                if s.get('SnapshotState')!='finished': raise ValueError('Source backup is not marked finished.')
+                if m.get('IsEncrypted') and not password: raise ValueError('Enter the source backup password.')
+                ver=tuple(int(x) for x in str(i.get('Product Version','0')).split('.')[:3]); family=str(i.get('Product Type',''))
+                for d in ds:
+                    dv=tuple(int(x) for x in str(d.get('version','0')).split('.')[:3]) if d.get('version') else ()
+                    if not dv or dv<ver: raise ValueError(f"Target {d['udid']} is older/unknown OS than source {i.get('Product Version')}; no restore started.")
+                    if family.startswith('iPad') and not d.get('product','').startswith('iPad'): raise ValueError('iPad backup cannot be applied to a non-iPad target.')
+                    if family.startswith('iPhone') and not d.get('product','').startswith('iPhone'): raise ValueError('iPhone backup cannot be applied to a non-iPhone target.')
+                source_udid=str(i.get('Target Identifier') or i.get('Unique Identifier') or b.name)
+                for d in ds: self.run([self.backup_tool.get(),'-u',d['udid'],'-s',source_udid,'restore','--copy',str(b.parent)])
+                if tmp: shutil.rmtree(tmp,ignore_errors=True)
+            finally:
+                self.active_password=''
         self.start(work)
 
 if __name__=='__main__':
