@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """iOS Backup Generator — native backup and deployment-profile manager."""
 from __future__ import annotations
-import json, os, plistlib, queue, shutil, subprocess, threading, zipfile, tempfile, uuid
+import json, os, plistlib, queue, shutil, subprocess, threading, zipfile, tempfile, uuid, hashlib, sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
 import tkinter as tk
@@ -30,19 +30,45 @@ def inspect(path):
     if not (b/'Manifest.db').is_file(): raise ValueError('Manifest.db is missing.')
     return b,info,manifest,status
 
+def validate_manifest(backup, encrypted):
+    db=backup/'Manifest.db'
+    if not db.is_file() or db.stat().st_size < 100:
+        raise ValueError('Manifest.db is missing or unexpectedly small.')
+    with db.open('rb') as f: header=f.read(16)
+    if header == b'SQLite format 3\x00':
+        con=sqlite3.connect(f'file:{db.as_posix()}?mode=ro',uri=True)
+        try:
+            result=con.execute('PRAGMA quick_check').fetchone()
+            if not result or result[0] != 'ok': raise ValueError('Manifest.db failed SQLite quick_check.')
+            names={r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if not {'Files','Properties'}.issubset(names): raise ValueError('Manifest.db is missing expected Apple backup tables.')
+            return {'kind':'SQLite','integrity':'ok','size':db.stat().st_size}
+        finally: con.close()
+    if encrypted:
+        return {'kind':'encrypted opaque database','integrity':'not inspectable without decryption','size':db.stat().st_size}
+    raise ValueError('Manifest.db is not SQLite and the backup is not marked encrypted.')
+
+
 class Generator(tk.Tk):
     def __init__(self):
-        super().__init__(); self.title(APP); self.geometry('1120x800'); self.minsize(920,650)
+        super().__init__(); self.title(APP); self.geometry('1180x850'); self.minsize(980,700)
+        style=ttk.Style(self)
+        try: style.theme_use('clam')
+        except tk.TclError: pass
+        style.configure('TButton',padding=(10,6))
+        style.configure('TNotebook.Tab',padding=(14,8))
+        style.configure('TLabelframe.Label',font=('Segoe UI',10,'bold'))
         self.models=asset('device_models.json',{'models':[]})['models']; self.samples=asset('archive_profiles.json',{'profiles':[]})['profiles']
         self.q=queue.Queue(); self.worker=None; self.devices=[]; self.apps=[]
         self.backup_tool=tk.StringVar(value=exe('idevicebackup2') or ''); self.id_tool=tk.StringVar(value=exe('idevice_id') or '')
         self.out=tk.StringVar(value=str(Path.home()/'iOS Backups')); self.source=tk.StringVar(); self.password=tk.StringVar()
         self.model=tk.StringVar(value='iPad (10th generation) — iPad13,18'); self.osver=tk.StringVar(value='26.6.1')
-        self.sample=tk.StringVar(value='Custom app list'); self.project=tk.StringVar(value=str(Path.home()/'iOS Deployment Projects'/'New Project'))
+        self.sample=tk.StringVar(value='All apps from both archives (merged)'); self.project=tk.StringVar(value=str(Path.home()/'iOS Deployment Projects'/'New Project'))
         self.project_name=tk.StringVar(value='New iPad Deployment'); self.appid=tk.StringVar(); self.appurl=tk.StringVar()
         self.enc=tk.StringVar(value='Leave device setting unchanged'); self.full=tk.BooleanVar(value=True)
         self.profile_name=tk.StringVar(value='Fleet Configuration'); self.org=tk.StringVar(value='Organization'); self.profile_id=tk.StringVar(value='com.example.fleet.configuration')
         self.ssid=tk.StringVar(); self.wifi_pw=tk.StringVar(); self.security=tk.StringVar(value='WPA')
+        self.edit_source=tk.StringVar(); self.edit_dest=tk.StringVar(value=str(Path.home()/'iOS Backup Workspaces'))
         self._ui(); self.after(150,self.poll); self.refresh()
 
     def _ui(self):
@@ -54,9 +80,10 @@ class Generator(tk.Tk):
             ttk.Label(tools,text=label).grid(row=i,column=0,sticky='w',padx=5,pady=3); ttk.Entry(tools,textvariable=var).grid(row=i,column=1,sticky='ew',padx=5); ttk.Button(tools,text='Browse',command=lambda v=var:self.pick_exe(v)).grid(row=i,column=2,padx=5)
         tools.columnconfigure(1,weight=1)
         self.tabs=ttk.Notebook(root); self.tabs.pack(fill='both',expand=True,pady=8)
-        self.dev=ttk.Frame(self.tabs,padding=10); self.create=ttk.Frame(self.tabs,padding=10); self.plan=ttk.Frame(self.tabs,padding=10); self.profile=ttk.Frame(self.tabs,padding=10); self.restore=ttk.Frame(self.tabs,padding=10)
-        for f,t in [(self.dev,'Devices'),(self.create,'Create backup'),(self.plan,'Deployment project'),(self.profile,'Configuration profile'),(self.restore,'Inspect / restore')]: self.tabs.add(f,text=t)
-        self.devices_ui(); self.create_ui(); self.plan_ui(); self.profile_ui(); self.restore_ui()
+        self.dev=ttk.Frame(self.tabs,padding=10); self.create=ttk.Frame(self.tabs,padding=10); self.plan=ttk.Frame(self.tabs,padding=10); self.profile=ttk.Frame(self.tabs,padding=10); self.restore=ttk.Frame(self.tabs,padding=10); self.editor=ttk.Frame(self.tabs,padding=10)
+        for f,t in [(self.dev,'Devices'),(self.create,'Create backup'),(self.plan,'Deployment project'),(self.profile,'Configuration profile'),(self.restore,'Inspect / restore'),(self.editor,'Safe backup workspace')]: self.tabs.add(f,text=t)
+        self.devices_ui(); self.create_ui(); self.plan_ui(); self.profile_ui(); self.restore_ui(); self.editor_ui()
+        self.load_sample()
         logbox=ttk.LabelFrame(root,text='Activity',padding=5); logbox.pack(fill='both'); self.log=tk.Text(logbox,height=7,state='disabled',wrap='word'); self.log.pack(fill='both',expand=True)
         self.status=ttk.Label(root,text='Ready'); self.status.pack(anchor='w')
     def devices_ui(self):
@@ -78,7 +105,7 @@ class Generator(tk.Tk):
         ttk.Label(f,text='Target device model').grid(row=2,column=0,sticky='w'); choices=[f"{m['name']} — {m['identifier']}" for m in self.models]; ttk.Combobox(f,textvariable=self.model,values=choices,state='readonly').grid(row=2,column=1,sticky='ew',pady=3)
         ttk.Label(f,text='Target iOS / iPadOS version').grid(row=3,column=0,sticky='w'); ttk.Combobox(f,textvariable=self.osver,values=['18.0.1','26.6.1'],state='normal').grid(row=3,column=1,sticky='ew',pady=3)
         ttk.Label(f,text='App list source').grid(row=4,column=0,sticky='w'); line=ttk.Frame(f); line.grid(row=4,column=1,sticky='ew')
-        ttk.Combobox(line,textvariable=self.sample,values=['Custom app list']+[x['label'] for x in self.samples],state='readonly').pack(side='left',fill='x',expand=True); ttk.Button(line,text='Load sample apps',command=self.load_sample).pack(side='left',padx=5)
+        ttk.Combobox(line,textvariable=self.sample,values=['All apps from both archives (merged)','Custom app list']+[x['label'] for x in self.samples],state='readonly').pack(side='left',fill='x',expand=True); ttk.Button(line,text='Load sample apps',command=self.load_sample).pack(side='left',padx=5)
         ttk.Label(f,text='Add bundle ID / optional App Store URL').grid(row=5,column=0,sticky='w',pady=5); line=ttk.Frame(f); line.grid(row=5,column=1,sticky='ew')
         ttk.Entry(line,textvariable=self.appid).pack(side='left',fill='x',expand=True); ttk.Entry(line,textvariable=self.appurl).pack(side='left',fill='x',expand=True,padx=5); ttk.Button(line,text='Add',command=self.add_app).pack(side='left')
         self.applist=tk.Listbox(f,height=8); self.applist.grid(row=7,column=0,columnspan=2,sticky='nsew',pady=5); ttk.Button(f,text='Remove selected',command=self.remove_app).grid(row=8,column=0,sticky='w')
@@ -95,6 +122,37 @@ class Generator(tk.Tk):
         ttk.Button(f,text='Inspect backup metadata',command=self.inspect_dialog).grid(row=1,column=0,sticky='w',pady=6)
         ttk.Label(f,text='Select target devices on the Devices tab. Restore replaces data. The source backup must be a genuine compatible device backup.',wraplength=850).grid(row=2,column=0,sticky='w',pady=6)
         ttk.Button(f,text='Restore source backup to selected devices…',command=self.restore_backups).grid(row=3,column=0,sticky='w')
+    def editor_ui(self):
+        f=self.editor; f.columnconfigure(1,weight=1)
+        self.pathrow(f,0,'Source native backup folder',self.edit_source,lambda:self.pick_backup_into(self.edit_source))
+        self.pathrow(f,1,'Workspace destination folder',self.edit_dest,lambda:self.pick_dir(self.edit_dest))
+        ttk.Label(f,text='Safe editing workflow',font=('Segoe UI',12,'bold')).grid(row=2,column=0,columnspan=2,sticky='w',pady=(12,4))
+        ttk.Label(f,text='Creates an independent, verified working copy. The original is never modified. Encrypted Manifest.db files remain opaque and are preserved byte-for-byte. Direct edits to backup payloads or manifest records are blocked to avoid corrupt restores.',wraplength=900,justify='left').grid(row=3,column=0,columnspan=2,sticky='w')
+        ttk.Button(f,text='Create and verify safe workspace copy',command=self.create_workspace).grid(row=4,column=0,sticky='w',pady=10)
+        ttk.Label(f,text='Manifest.db is generated by idevicebackup2 during a real device backup. This app verifies that it exists and checks SQLite integrity where possible; it will not fabricate a database from app IDs.',foreground='#805000',wraplength=900,justify='left').grid(row=5,column=0,columnspan=2,sticky='w',pady=5)
+    def pick_backup_into(self,var):
+        p=filedialog.askdirectory()
+        if p: var.set(p)
+    def create_workspace(self):
+        src=Path(self.edit_source.get()).expanduser()
+        destroot=Path(self.edit_dest.get()).expanduser()
+        if not src.exists():
+            messagebox.showerror(APP,'Select an existing native backup folder.'); return
+        try: b,info,manifest,status=inspect(src)
+        except Exception as e: messagebox.showerror(APP,str(e)); return
+        dest=destroot/(safe(b.name)+'_workspace_'+datetime.now().strftime('%Y%m%d_%H%M%S'))
+        def work():
+            if destroot.resolve()==b.resolve() or b.resolve() in destroot.resolve().parents:
+                raise RuntimeError('Workspace destination must be outside the source backup.')
+            destroot.mkdir(parents=True,exist_ok=True)
+            shutil.copytree(b,dest)
+            validate_manifest(dest, bool(manifest.get('IsEncrypted')))
+            for name in ('Info.plist','Manifest.plist','Status.plist','Manifest.db'):
+                original=b/name; copied=dest/name
+                if original.exists() and hashlib.sha256(original.read_bytes()).digest()!=hashlib.sha256(copied.read_bytes()).digest():
+                    raise RuntimeError('Workspace verification failed for '+name+'; original remains untouched.')
+            self.logmsg('Verified independent workspace: '+str(dest))
+            self.logmsg('Native backup files were preserved byte-for-byte. Direct payload editing is intentionally blocked.')
     def pathrow(self,f,r,label,var,cmd):
         ttk.Label(f,text=label).grid(row=r,column=0,sticky='w',pady=3); line=ttk.Frame(f); line.grid(row=r,column=1,sticky='ew'); line.columnconfigure(0,weight=1); ttk.Entry(line,textvariable=var).grid(row=0,column=0,sticky='ew'); ttk.Button(line,text='Browse',command=cmd).grid(row=0,column=1,padx=5)
     def pick_dir(self,var):
@@ -150,12 +208,23 @@ class Generator(tk.Tk):
         threading.Thread(target=work,daemon=True).start()
     def selected(self): return [self.devices[i] for i in self.list.curselection() if i<len(self.devices)]
     def load_sample(self):
-        p=next((x for x in self.samples if x['label']==self.sample.get()),None)
-        if not p: return
-        self.apps=[{'bundle_id':x,'app_store_url':None} for x in p['installed_apps']]; self.applist.delete(0,'end')
+        if self.sample.get()=='All apps from both archives (merged)':
+            ids=self.samples_data_all_apps()
+            p=max(self.samples,key=lambda x:tuple(int(v) for v in x['product_version'].split('.')))
+            label='both supplied archives (merged)'
+        else:
+            p=next((x for x in self.samples if x['label']==self.sample.get()),None)
+            if not p: return
+            ids=sorted(set(p.get('installed_apps',[])))
+            label=p['label']
+        self.apps=[{'bundle_id':x,'app_store_url':None} for x in ids]; self.applist.delete(0,'end')
         for x in self.apps: self.applist.insert('end',x['bundle_id'])
         self.model.set(p['product_name']+' — '+p['product_type']); self.osver.set(p['product_version'])
-        self.logmsg(f"Loaded {len(self.apps)} app identifiers from {p['label']}")
+        self.logmsg(f"Loaded {len(self.apps)} distinct app IDs from {label}. Apple bundle IDs are retained too.")
+    def samples_data_all_apps(self):
+        ids=set()
+        for p in self.samples: ids.update(p.get('installed_apps',[]))
+        return sorted(ids)
     def add_app(self):
         b=self.appid.get().strip(); u=self.appurl.get().strip()
         if not b or '.' not in b: messagebox.showerror(APP,'Enter a valid bundle identifier.'); return
@@ -200,6 +269,8 @@ class Generator(tk.Tk):
                 if mode!='Leave device setting unchanged': self.run([self.backup_tool.get(),'-u',d['udid'],'encryption','on' if mode=='Enable encryption' else 'off'])
                 args=[self.backup_tool.get(),'-u',d['udid'],'backup']+(['--full'] if self.full.get() else [])+[str(folder)]; self.run(args)
                 b=locate(folder); _,inf,man,st=inspect(b)
+                report=validate_manifest(b, bool(man.get('IsEncrypted')))
+                self.logmsg('Manifest.db generated and checked: '+str(report))
                 if st.get('SnapshotState')!='finished': raise RuntimeError('Backup did not reach SnapshotState=finished.')
                 self.logmsg(f"Verified {d['udid']}: {inf.get('Product Type')} / {inf.get('Product Version')} / encrypted={man.get('IsEncrypted')}")
         self.start(work)
@@ -216,7 +287,7 @@ class Generator(tk.Tk):
         return locate(p),None
     def inspect_dialog(self):
         try:
-            b,i,m,s=inspect(self.resolve()[0]); messagebox.showinfo(APP,f"{i.get('Product Name')} ({i.get('Product Type')})\niOS/iPadOS {i.get('Product Version')}\nEncrypted: {m.get('IsEncrypted')}\nSnapshot: {s.get('SnapshotState')}\nFull backup: {s.get('IsFullBackup')}\nBackup format: {s.get('Version')}\nInstalled apps: {len(i.get('Installed Applications',[]))}\n\nThe supplied archives are marked IsFullBackup=false.")
+            b,i,m,s=inspect(self.resolve()[0]); dbreport=validate_manifest(b,bool(m.get('IsEncrypted'))); messagebox.showinfo(APP,f"{i.get('Product Name')} ({i.get('Product Type')})\niOS/iPadOS {i.get('Product Version')}\nEncrypted: {m.get('IsEncrypted')}\nManifest.db: {dbreport}\nSnapshot: {s.get('SnapshotState')}\nFull backup: {s.get('IsFullBackup')}\nBackup format: {s.get('Version')}\nInstalled apps: {len(i.get('Installed Applications',[]))}\n\nThe supplied archives are marked IsFullBackup=false.")
         except Exception as e: messagebox.showerror(APP,str(e))
     def restore_backups(self):
         ds=self.selected()
@@ -233,7 +304,7 @@ class Generator(tk.Tk):
                 if family.startswith('iPad') and not d.get('product','').startswith('iPad'): raise ValueError('iPad backup cannot be applied to a non-iPad target.')
                 if family.startswith('iPhone') and not d.get('product','').startswith('iPhone'): raise ValueError('iPhone backup cannot be applied to a non-iPhone target.')
             source_udid=str(i.get('Target Identifier') or i.get('Unique Identifier') or b.name)
-            for d in ds: self.run([self.backup_tool.get(),'-u',d['udid'],'-s',source_udid,'restore',str(b.parent)])
+            for d in ds: self.run([self.backup_tool.get(),'-u',d['udid'],'-s',source_udid,'restore','--copy',str(b.parent)])
             if tmp: shutil.rmtree(tmp,ignore_errors=True)
         self.start(work)
 
