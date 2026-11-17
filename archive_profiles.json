@@ -15,7 +15,20 @@
         "com.popplet.popplet",
         "com.air-watch.agent",
         "com.air-watch.secure.browser"
-      ]
+      ],
+      "application_metadata_ids": [
+        "com.air-watch.agent",
+        "com.air-watch.secure.browser",
+        "com.panareadigital.NearpodTeacher",
+        "com.popplet.popplet"
+      ],
+      "all_observed_app_ids": [
+        "com.air-watch.agent",
+        "com.air-watch.secure.browser",
+        "com.panareadigital.NearpodTeacher",
+        "com.popplet.popplet"
+      ],
+      "apple_bundle_ids": []
     },
     {
       "label": "iPad 10th generation — iPadOS 26.6.1 (sample archive)",
@@ -34,6 +47,25 @@
         "com.openai.chat",
         "com.schoologytauri.app.9U54KY7847",
         "com.launchplan.mobile"
+      ],
+      "application_metadata_ids": [
+        "com.apple.TestFlight",
+        "com.google.chrome.ios",
+        "com.launchplan.mobile",
+        "com.openai.chat",
+        "com.overdrive.dewey"
+      ],
+      "all_observed_app_ids": [
+        "com.apple.TestFlight",
+        "com.google.chrome.ios",
+        "com.kdt.livecontainer.9U54KY7847",
+        "com.launchplan.mobile",
+        "com.openai.chat",
+        "com.overdrive.dewey",
+        "com.schoologytauri.app.9U54KY7847"
+      ],
+      "apple_bundle_ids": [
+        "com.apple.TestFlight"
       ]
     }
   ],
@@ -66,5 +98,8 @@
       "com.schoologytauri.app.9U54KY7847",
       "com.launchplan.mobile"
     ]
-  }
+  },
+  "apple_bundle_ids": [
+    "com.apple.TestFlight"
+  ]
 }
