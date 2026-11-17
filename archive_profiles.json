@@ -36,5 +36,35 @@
         "com.launchplan.mobile"
       ]
     }
-  ]
+  ],
+  "all_apps_from_archives": [
+    "com.air-watch.agent",
+    "com.air-watch.secure.browser",
+    "com.apple.TestFlight",
+    "com.google.chrome.ios",
+    "com.kdt.livecontainer.9U54KY7847",
+    "com.launchplan.mobile",
+    "com.openai.chat",
+    "com.overdrive.dewey",
+    "com.panareadigital.NearpodTeacher",
+    "com.popplet.popplet",
+    "com.schoologytauri.app.9U54KY7847"
+  ],
+  "apps_by_archive": {
+    "18.0.1": [
+      "com.panareadigital.NearpodTeacher",
+      "com.popplet.popplet",
+      "com.air-watch.agent",
+      "com.air-watch.secure.browser"
+    ],
+    "26.6.1": [
+      "com.apple.TestFlight",
+      "com.overdrive.dewey",
+      "com.google.chrome.ios",
+      "com.kdt.livecontainer.9U54KY7847",
+      "com.openai.chat",
+      "com.schoologytauri.app.9U54KY7847",
+      "com.launchplan.mobile"
+    ]
+  }
 }
