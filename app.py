@@ -207,10 +207,11 @@ class Generator(tk.Tk):
         rc=p.wait()
         if rc: raise RuntimeError(f'Command failed with exit code {rc}')
     def refresh(self):
-        if not self.id_tool.get() or not Path(self.id_tool.get()).exists(): self.logmsg('idevice_id not found. Install libimobiledevice and set the executable path.'); return
+        id_tool=self.id_tool.get()
+        if not id_tool or not Path(id_tool).exists(): self.logmsg('idevice_id not found. Install libimobiledevice and set the executable path.'); return
         def work():
             ds=[]; info_tool=exe('ideviceinfo')
-            raw=subprocess.check_output([self.id_tool.get(),'-l'],text=True,stderr=subprocess.STDOUT,timeout=20)
+            raw=subprocess.check_output([id_tool,'-l'],text=True,stderr=subprocess.STDOUT,timeout=20)
             for udid in [x.strip() for x in raw.splitlines() if x.strip()]:
                 d={'udid':udid,'name':'iOS device','product':'','version':''}
                 if info_tool:
@@ -277,14 +278,14 @@ class Generator(tk.Tk):
         if not messagebox.askyesno(APP,f'Create native backups for {len(ds)} selected devices?'): return
         out=Path(self.out.get()).expanduser(); mode=self.enc.get()
         if mode!='Leave device setting unchanged' and not self.password.get(): messagebox.showerror(APP,'Enter the current/new backup password first.'); return
-        full=bool(self.full.get()); self.active_password=self.password.get()
+        full=bool(self.full.get()); self.active_password=self.password.get(); backup_tool=self.backup_tool.get()
         def work():
             try:
                 out.mkdir(parents=True,exist_ok=True)
                 for d in ds:
                     folder=out/(safe(d['name'])+'_'+d['udid']+'_'+datetime.now().strftime('%Y%m%d_%H%M%S')); folder.mkdir()
-                    if mode!='Leave device setting unchanged': self.run([self.backup_tool.get(),'-u',d['udid'],'encryption','on' if mode=='Enable encryption' else 'off'])
-                    args=[self.backup_tool.get(),'-u',d['udid'],'backup']+(['--full'] if full else [])+[str(folder)]; self.run(args)
+                    if mode!='Leave device setting unchanged': self.run([backup_tool,'-u',d['udid'],'encryption','on' if mode=='Enable encryption' else 'off'])
+                    args=[backup_tool,'-u',d['udid'],'backup']+(['--full'] if full else [])+[str(folder)]; self.run(args)
                     b=locate(folder); _,inf,man,st=inspect(b)
                     report=validate_manifest(b, bool(man.get('IsEncrypted')))
                     self.logmsg('Manifest.db generated and checked: '+str(report))
@@ -312,7 +313,7 @@ class Generator(tk.Tk):
         ds=self.selected()
         if not ds or not self.source.get(): messagebox.showwarning(APP,'Select devices and a source backup.'); return
         if not messagebox.askyesno(APP,'Restore overwrites data on every selected device. Back up targets first. Continue?',icon='warning'): return
-        source_value=self.source.get(); password=self.password.get(); self.active_password=password
+        source_value=self.source.get(); password=self.password.get(); self.active_password=password; backup_tool=self.backup_tool.get()
         def work():
             try:
                 b,tmp=self.resolve(source_value); _,i,m,s=inspect(b)
@@ -325,7 +326,7 @@ class Generator(tk.Tk):
                     if family.startswith('iPad') and not d.get('product','').startswith('iPad'): raise ValueError('iPad backup cannot be applied to a non-iPad target.')
                     if family.startswith('iPhone') and not d.get('product','').startswith('iPhone'): raise ValueError('iPhone backup cannot be applied to a non-iPhone target.')
                 source_udid=str(i.get('Target Identifier') or i.get('Unique Identifier') or b.name)
-                for d in ds: self.run([self.backup_tool.get(),'-u',d['udid'],'-s',source_udid,'restore','--copy',str(b.parent)])
+                for d in ds: self.run([backup_tool,'-u',d['udid'],'-s',source_udid,'restore','--copy',str(b.parent)])
                 if tmp: shutil.rmtree(tmp,ignore_errors=True)
             finally:
                 self.active_password=''
