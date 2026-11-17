@@ -19,10 +19,12 @@ def safe(s): return ''.join(c if c.isalnum() or c in ' -_.' else '_' for c in s)
 def plist(path):
     with open(path,'rb') as f: return plistlib.load(f)
 def locate(path):
+    path=Path(path)
     if (path/'Info.plist').is_file() and (path/'Manifest.plist').is_file(): return path
-    found=[p for p in path.iterdir() if p.is_dir() and (p/'Info.plist').is_file() and (p/'Manifest.plist').is_file()]
+    found=sorted({p.parent for p in path.rglob('Info.plist') if (p.parent/'Manifest.plist').is_file()})
     if len(found)==1: return found[0]
-    raise ValueError('Choose one native backup folder containing Info.plist and Manifest.plist.')
+    if len(found)>1: raise ValueError('The selected folder contains multiple native backups. Select one backup folder.')
+    raise ValueError('No native backup found. Select a folder containing Info.plist and Manifest.plist, or a ZIP containing one backup.')
 
 def inspect(path):
     b=locate(path); info=plist(b/'Info.plist'); manifest=plist(b/'Manifest.plist')
@@ -298,12 +300,16 @@ class Generator(tk.Tk):
         p=Path(source_value if source_value is not None else self.source.get()).expanduser()
         if p.is_file() and zipfile.is_zipfile(p):
             t=Path(tempfile.mkdtemp(prefix='iosbg-'))
-            with zipfile.ZipFile(p) as z:
-                for x in z.infolist():
-                    out=(t/x.filename).resolve()
-                    if t.resolve() not in out.parents and out!=t.resolve(): raise ValueError('Unsafe ZIP entry path.')
-                z.extractall(t)
-            return locate(t),t
+            try:
+                with zipfile.ZipFile(p) as z:
+                    for x in z.infolist():
+                        out=(t/x.filename).resolve()
+                        if t.resolve() not in out.parents and out!=t.resolve(): raise ValueError('Unsafe ZIP entry path.')
+                    z.extractall(t)
+                return locate(t),t
+            except Exception:
+                shutil.rmtree(t,ignore_errors=True)
+                raise
         return locate(p),None
     def inspect_dialog(self):
         try:
