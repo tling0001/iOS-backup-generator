@@ -57,15 +57,31 @@ jobs:
       - name: Build standalone application
         shell: bash
         run: |
-          python -m PyInstaller \
-            --noconfirm \
-            --clean \
-            --windowed \
-            --onefile \
-            --name "iOS Backup Generator" \
-            --add-data "device_models.json${{ matrix.data_separator }}." \
-            --add-data "archive_profiles.json${{ matrix.data_separator }}." \
-            app.py
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            # A normal onedir .app avoids the repeated extraction overhead of one-file macOS bundles.
+            python -m PyInstaller \
+              --noconfirm \
+              --clean \
+              --windowed \
+              --onedir \
+              --osx-bundle-identifier "com.tling0001.iosbackupgenerator" \
+              --name "iOS Backup Generator" \
+              --add-data "device_models.json${{ matrix.data_separator }}." \
+              --add-data "archive_profiles.json${{ matrix.data_separator }}." \
+              app.py
+            test -d "dist/iOS Backup Generator.app"
+          else
+            python -m PyInstaller \
+              --noconfirm \
+              --clean \
+              --windowed \
+              --onefile \
+              --name "iOS Backup Generator" \
+              --add-data "device_models.json${{ matrix.data_separator }}." \
+              --add-data "archive_profiles.json${{ matrix.data_separator }}." \
+              app.py
+            test -f "dist/iOS Backup Generator.exe"
+          fi
 
       - name: Prepare Windows release archive
         if: runner.os == 'Windows'
