@@ -147,12 +147,16 @@ class Generator(tk.Tk):
             destroot.mkdir(parents=True,exist_ok=True)
             shutil.copytree(b,dest)
             validate_manifest(dest, bool(manifest.get('IsEncrypted')))
-            for name in ('Info.plist','Manifest.plist','Status.plist','Manifest.db'):
-                original=b/name; copied=dest/name
-                if original.exists() and hashlib.sha256(original.read_bytes()).digest()!=hashlib.sha256(copied.read_bytes()).digest():
-                    raise RuntimeError('Workspace verification failed for '+name+'; original remains untouched.')
-            self.logmsg('Verified independent workspace: '+str(dest))
-            self.logmsg('Native backup files were preserved byte-for-byte. Direct payload editing is intentionally blocked.')
+            source_files={p.relative_to(b) for p in b.rglob('*') if p.is_file()}
+            copied_files={p.relative_to(dest) for p in dest.rglob('*') if p.is_file()}
+            if source_files != copied_files:
+                raise RuntimeError('Workspace file inventory differs from source; original remains untouched.')
+            for rel in source_files:
+                original=b/rel; copied=dest/rel
+                if original.stat().st_size != copied.stat().st_size or hashlib.sha256(original.read_bytes()).digest()!=hashlib.sha256(copied.read_bytes()).digest():
+                    raise RuntimeError('Workspace byte verification failed for '+str(rel)+'; original remains untouched.')
+            self.logmsg(f'Verified {len(source_files)} files byte-for-byte in workspace: '+str(dest))
+            self.logmsg('Original backup remains untouched. Direct payload editing is intentionally blocked until manifest-aware editing is supported.')
         self.start(work)
     def pathrow(self,f,r,label,var,cmd):
         ttk.Label(f,text=label).grid(row=r,column=0,sticky='w',pady=3); line=ttk.Frame(f); line.grid(row=r,column=1,sticky='ew'); line.columnconfigure(0,weight=1); ttk.Entry(line,textvariable=var).grid(row=0,column=0,sticky='ew'); ttk.Button(line,text='Browse',command=cmd).grid(row=0,column=1,padx=5)
