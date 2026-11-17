@@ -216,7 +216,7 @@ class Generator(tk.Tk):
         else:
             p=next((x for x in self.samples if x['label']==self.sample.get()),None)
             if not p: return
-            ids=sorted(set(p.get('installed_apps',[])))
+            ids=sorted(set(p.get('all_observed_app_ids',p.get('installed_apps',[]))))
             label=p['label']
         self.apps=[{'bundle_id':x,'app_store_url':None} for x in ids]; self.applist.delete(0,'end')
         for x in self.apps: self.applist.insert('end',x['bundle_id'])
@@ -224,7 +224,7 @@ class Generator(tk.Tk):
         self.logmsg(f"Loaded {len(self.apps)} distinct app IDs from {label}. Apple bundle IDs are retained too.")
     def samples_data_all_apps(self):
         ids=set()
-        for p in self.samples: ids.update(p.get('installed_apps',[]))
+        for p in self.samples: ids.update(p.get('all_observed_app_ids',p.get('installed_apps',[])))
         return sorted(ids)
     def add_app(self):
         b=self.appid.get().strip(); u=self.appurl.get().strip()
