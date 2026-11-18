@@ -414,13 +414,26 @@ class Generator(tk.Tk):
         row=self.selected_editor_row()
         if not row: return
         backup=self.editor_backup.get()
-        try: payload=validate_editable_payload(backup,row)
+        try:
+            if self.encrypted_backup:
+                from iphone_backup_decrypt import utils as backup_utils
+                meta=backup_utils.FilePlist(row['metadata'])
+                if meta.encryption_key is None or int(row.get('flags',0))!=1:
+                    raise ValueError('Selected record is not an encrypted regular file.')
+                key=self.encrypted_backup.keybag.unwrap_key_for_class(meta.protection_class,meta.encryption_key)
+                payload=Path(backup_utils.backup_file_path(backup,row['fileID']))
+            else:
+                payload=validate_editable_payload(backup,row)
         except Exception as e: messagebox.showerror(APP,str(e)); return
         dest=filedialog.asksaveasfilename(initialfile=Path(row['relativePath']).name)
         if not dest: return
         def work():
-            shutil.copy2(payload,dest)
-            self.logmsg('Exported '+row['domain']+'/'+row['relativePath']+' to '+dest)
+            if self.encrypted_backup:
+                self.encrypted_backup._decrypt_file_to_disk(file_id=row['fileID'],key=key,file_plist=meta,output_filepath=dest)
+                self.logmsg('Decrypted and exported '+row['domain']+'/'+row['relativePath']+' to '+dest)
+            else:
+                shutil.copy2(payload,dest)
+                self.logmsg('Exported '+row['domain']+'/'+row['relativePath']+' to '+dest)
         self.start(work)
 
     def replace_editor_file(self):
