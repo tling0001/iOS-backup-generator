@@ -164,14 +164,32 @@ def payload_for_row(backup, row):
     return payload
 
 
-def metadata_values(node):
+def metadata_values(node, objects=None, seen=None):
+    if seen is None: seen=set()
     if isinstance(node,dict):
+        if isinstance(node.get('$objects'),list): objects=node['$objects']
+        marker=id(node)
+        if marker in seen: return
+        seen.add(marker)
         for key,value in node.items():
-            yield str(key),value
-            yield from metadata_values(value)
+            if key=='$objects': continue
+            resolved=value
+            if isinstance(value,plistlib.UID) and objects is not None and 0<=value.data<len(objects):
+                resolved=objects[value.data]
+            yield str(key),resolved
+            if resolved is value:
+                yield from metadata_values(value,objects,seen)
+            else:
+                yield from metadata_values(resolved,objects,seen)
     elif isinstance(node,(list,tuple)):
+        marker=id(node)
+        if marker in seen: return
+        seen.add(marker)
         for value in node:
-            yield from metadata_values(value)
+            resolved=value
+            if isinstance(value,plistlib.UID) and objects is not None and 0<=value.data<len(objects):
+                resolved=objects[value.data]
+            yield from metadata_values(resolved,objects,seen)
 
 
 def validate_editable_payload(backup, row):
