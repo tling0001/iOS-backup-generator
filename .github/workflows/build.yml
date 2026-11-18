@@ -62,6 +62,7 @@ jobs:
               --noconfirm \
               --clean \
               --windowed \
+              --hidden-import iphone_backup_decrypt \
               --onedir \
               --osx-bundle-identifier "com.tling0001.iosbackupgenerator" \
               --name "iOS Backup Generator" \
@@ -74,6 +75,7 @@ jobs:
               --noconfirm \
               --clean \
               --windowed \
+              --hidden-import iphone_backup_decrypt \
               --onefile \
               --name "iOS Backup Generator" \
               --add-data "device_models.json${{ matrix.data_separator }}." \
