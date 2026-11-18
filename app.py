@@ -5,7 +5,7 @@ import json, os, plistlib, queue, shutil, subprocess, threading, zipfile, tempfi
 from pathlib import Path
 from datetime import datetime, timezone
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 
 ROOT=Path(__file__).resolve().parent
 APP="iOS Backup Generator"
@@ -242,7 +242,7 @@ class Generator(tk.Tk):
         self.enc=tk.StringVar(value='Leave device setting unchanged'); self.full=tk.BooleanVar(value=True)
         self.profile_name=tk.StringVar(value='Fleet Configuration'); self.org=tk.StringVar(value='Organization'); self.profile_id=tk.StringVar(value='com.example.fleet.configuration')
         self.ssid=tk.StringVar(); self.wifi_pw=tk.StringVar(); self.security=tk.StringVar(value='WPA')
-        self.edit_source=tk.StringVar(); self.edit_dest=tk.StringVar(value=str(Path.home()/'iOS Backup Workspaces')); self.editor_backup=tk.StringVar(); self.editor_query=tk.StringVar(); self.editor_rows=[]
+        self.edit_source=tk.StringVar(); self.edit_dest=tk.StringVar(value=str(Path.home()/'iOS Backup Workspaces')); self.editor_backup=tk.StringVar(); self.editor_query=tk.StringVar(); self.editor_rows=[]; self.encrypted_backup=None
         self.apple_email=tk.StringVar(); self.apple_label=tk.StringVar(); self.apple_account_mode=tk.StringVar(value='Sign in manually on each device')
         self._ui(); self.after(150,self.poll); self.refresh()
 
@@ -309,7 +309,7 @@ class Generator(tk.Tk):
         self.pathrow(f,1,'Workspace destination folder',self.edit_dest,lambda:self.pick_dir(self.edit_dest))
         bar=ttk.Frame(f); bar.grid(row=2,column=0,columnspan=2,sticky='w',pady=5)
         ttk.Button(bar,text='Create verified workspace',command=self.create_workspace).pack(side='left')
-        ttk.Button(bar,text='Open existing unencrypted workspace',command=self.open_editor_workspace).pack(side='left',padx=6)
+        ttk.Button(bar,text='Open / unlock workspace…',command=self.open_editor_workspace).pack(side='left',padx=6)
         ttk.Label(f,text='Active workspace').grid(row=3,column=0,sticky='w')
         ttk.Entry(f,textvariable=self.editor_backup,state='readonly').grid(row=3,column=1,sticky='ew')
         search=ttk.Frame(f); search.grid(row=4,column=0,columnspan=2,sticky='ew',pady=6)
@@ -322,7 +322,7 @@ class Generator(tk.Tk):
         ttk.Button(actions,text='Export selected…',command=self.export_editor_file).pack(side='left')
         ttk.Button(actions,text='Replace (same size)…',command=self.replace_editor_file).pack(side='left',padx=6)
         ttk.Button(actions,text='Undo replacement',command=self.undo_editor_file).pack(side='left')
-        ttk.Label(f,text='Editing is limited to verified workspace copies of unencrypted backups, regular files with matching SHA-1 fileIDs, matching metadata sizes, and no per-file encryption or content digest. Replacements must be exactly the same byte length. Encrypted backups, Apple Account/Keychain secrets, directories, symlinks and unsupported records remain read-only.',foreground='#805000',wraplength=900,justify='left').grid(row=7,column=0,columnspan=2,sticky='w',pady=5)
+        ttk.Label(f,text='Encrypted workspaces can be unlocked, searched and decrypted for export. Same-size encrypted replacement reuses the existing per-file key and unchanged manifest metadata. Size changes and Manifest.db rewriting are not yet supported. Apple Account/Keychain secrets, directories, symlinks and unsupported records remain read-only.',foreground='#805000',wraplength=900,justify='left').grid(row=7,column=0,columnspan=2,sticky='w',pady=5)
     def pick_backup_into(self,var):
         p=filedialog.askdirectory()
         if p: var.set(p)
@@ -357,10 +357,22 @@ class Generator(tk.Tk):
         try:
             b=locate(Path(p))
             if '_workspace_' not in b.name:
-                raise ValueError('For safety, only open folders created by Create verified workspace. This prevents accidental edits to the original backup.')
+                raise ValueError('For safety, only open a verified workspace copy, never the original backup.')
             manifest=plist(b/'Manifest.plist')
-            if manifest.get('IsEncrypted'): raise ValueError('Encrypted backups are currently read-only.')
-            validate_manifest(b,False)
+            if manifest.get('IsEncrypted'):
+                password=self.password.get()
+                if password == '':
+                    password=simpledialog.askstring(APP,'Enter the encrypted backup password (spaces are significant):',show='•',parent=self)
+                if password is None or password == '':
+                    return
+                from iphone_backup_decrypt import EncryptedBackup
+                unlocked=EncryptedBackup(backup_directory=str(b),passphrase=password)
+                unlocked.test_decryption()
+                self.encrypted_backup=unlocked
+                self.logmsg('Encrypted backup keybag unlocked and Manifest.db decrypted in a temporary private working directory.')
+            else:
+                validate_manifest(b,False)
+                self.encrypted_backup=None
             self.editor_backup.set(str(b)); self.load_editor_files()
         except Exception as e: messagebox.showerror(APP,str(e))
 
@@ -369,7 +381,20 @@ class Generator(tk.Tk):
         if not backup: messagebox.showwarning(APP,'Create or open a workspace first.'); return
         query=self.editor_query.get()
         def work():
-            rows=manifest_search_rows(backup,query)
+            if self.encrypted_backup:
+                terms=[x.strip() for x in (query or '').split('|') if x.strip()]
+                with self.encrypted_backup.manifest_db_cursor() as cur:
+                    if terms:
+                        where=' OR '.join(['domain LIKE ? OR relativePath LIKE ?' for _ in terms])
+                        args=[]
+                        for term in terms: args.extend(['%'+term+'%','%'+term+'%'])
+                        args.append(2500)
+                        cur.execute('SELECT fileID,domain,relativePath,flags,file FROM Files WHERE '+where+' ORDER BY domain,relativePath LIMIT ?',args)
+                    else:
+                        cur.execute('SELECT fileID,domain,relativePath,flags,file FROM Files ORDER BY domain,relativePath LIMIT 2500')
+                    rows=[{'fileID':r[0],'domain':r[1],'relativePath':r[2],'flags':r[3],'metadata':r[4]} for r in cur.fetchall()]
+            else:
+                rows=manifest_search_rows(backup,query)
             self.q.put(('editor_rows',rows))
             self.logmsg('Loaded '+str(len(rows))+' manifest file entries'+(' (showing up to 2,500).' if len(rows)>=2500 else '.'))
         self.start(work)
