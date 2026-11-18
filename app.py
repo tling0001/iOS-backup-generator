@@ -95,8 +95,8 @@ def validate_replacement_payload(backup, row, replacement):
         raise ValueError('Replacement must have exactly the same byte length as the existing payload.')
     with payload.open('rb') as f: original_header=f.read(16)
     with replacement.open('rb') as f: replacement_header=f.read(16)
-    if original_header==b'SQLite format 3\\x00':
-        if replacement_header!=b'SQLite format 3\\x00':
+    if original_header==b'SQLite format 3\x00':
+        if replacement_header!=b'SQLite format 3\x00':
             raise ValueError('The existing payload is SQLite; replacement must also be SQLite.')
         if Path(str(replacement)+'-wal').exists() or Path(str(replacement)+'-shm').exists():
             raise ValueError('Checkpoint the replacement SQLite database before importing it; WAL/SHM sidecars are not imported.')
