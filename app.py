@@ -84,6 +84,43 @@ def build_archive_inventory(backup):
     }
 
 
+
+def validate_replacement_payload(backup, row, replacement):
+    """Validate common structured payloads before a same-size replacement."""
+    payload=validate_editable_payload(backup,row)
+    replacement=Path(replacement)
+    if not replacement.is_file():
+        raise ValueError('Replacement file does not exist.')
+    if replacement.stat().st_size!=payload.stat().st_size:
+        raise ValueError('Replacement must have exactly the same byte length as the existing payload.')
+    with payload.open('rb') as f: original_header=f.read(16)
+    with replacement.open('rb') as f: replacement_header=f.read(16)
+    if original_header==b'SQLite format 3\\x00':
+        if replacement_header!=b'SQLite format 3\\x00':
+            raise ValueError('The existing payload is SQLite; replacement must also be SQLite.')
+        if Path(str(replacement)+'-wal').exists() or Path(str(replacement)+'-shm').exists():
+            raise ValueError('Checkpoint the replacement SQLite database before importing it; WAL/SHM sidecars are not imported.')
+        db=locate(backup)/'Manifest.db'
+        con=sqlite3.connect(db.resolve().as_uri()+'?mode=ro',uri=True)
+        try:
+            related=con.execute('SELECT 1 FROM Files WHERE domain=? AND relativePath IN (?,?) LIMIT 1',(row['domain'],row['relativePath']+'-wal',row['relativePath']+'-shm')).fetchone()
+            if related:
+                raise ValueError('The backup includes SQLite WAL/SHM companion files for this database; editing just the main database is unsafe.')
+        finally:
+            con.close()
+        check=sqlite3.connect(replacement.resolve().as_uri()+'?mode=ro',uri=True)
+        try:
+            result=check.execute('PRAGMA quick_check').fetchone()
+            if not result or result[0]!='ok':
+                raise ValueError('Replacement SQLite database failed quick_check.')
+        finally:
+            check.close()
+    elif original_header==b'bplist00' or original_header.lstrip().startswith(b'<?xml'):
+        try: plistlib.loads(replacement.read_bytes())
+        except Exception as e: raise ValueError('Replacement property list is invalid: '+str(e))
+    return payload
+
+
 def manifest_search_rows(backup, query='', limit=2500):
     """Read indexed backup paths from an unencrypted native Manifest.db."""
     backup=locate(backup)
@@ -359,6 +396,7 @@ class Generator(tk.Tk):
         rollback=Path(backup).parent/(Path(backup).name+'.iosbg-rollback')
         saved=rollback/row['fileID']
         def work():
+            validate_replacement_payload(backup,row,replacement)
             rollback.mkdir(parents=True,exist_ok=True)
             if not saved.exists(): shutil.copy2(payload,saved)
             temp=payload.with_name(payload.name+'.iosbg-tmp')
