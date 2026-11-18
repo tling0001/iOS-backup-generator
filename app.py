@@ -76,10 +76,13 @@ def manifest_search_rows(backup, query='', limit=2500):
         cols={r[1] for r in con.execute('PRAGMA table_info(Files)')}
         if not {'fileID','domain','relativePath','flags','file'}.issubset(cols):
             raise ValueError('Manifest.db Files table has an unsupported schema.')
-        q=(query or '').strip()
-        if q:
-            like='%'+q+'%'
-            rows=con.execute('SELECT fileID,domain,relativePath,flags,file FROM Files WHERE domain LIKE ? OR relativePath LIKE ? ORDER BY domain,relativePath LIMIT ?',(like,like,int(limit))).fetchall()
+        terms=[x.strip() for x in (query or '').split('|') if x.strip()]
+        if terms:
+            where=' OR '.join(['domain LIKE ? OR relativePath LIKE ?' for _ in terms])
+            args=[]
+            for term in terms: args.extend(['%'+term+'%','%'+term+'%'])
+            args.append(int(limit))
+            rows=con.execute('SELECT fileID,domain,relativePath,flags,file FROM Files WHERE '+where+' ORDER BY domain,relativePath LIMIT ?',args).fetchall()
         else:
             rows=con.execute('SELECT fileID,domain,relativePath,flags,file FROM Files ORDER BY domain,relativePath LIMIT ?',(int(limit),)).fetchall()
         return [{'fileID':r[0],'domain':r[1],'relativePath':r[2],'flags':r[3],'metadata':r[4]} for r in rows]
@@ -261,8 +264,105 @@ class Generator(tk.Tk):
                 if original.stat().st_size != copied.stat().st_size or sha256_file(original)!=sha256_file(copied):
                     raise RuntimeError('Workspace byte verification failed for '+str(rel)+'; original remains untouched.')
             self.logmsg(f'Verified {len(source_files)} files byte-for-byte in workspace: '+str(dest))
-            self.logmsg('Original backup remains untouched. Direct payload editing is intentionally blocked until manifest-aware editing is supported.')
+            self.logmsg('Original backup remains untouched. Workspace ready for supported unencrypted same-size file operations.'); self.q.put(('editor_backup',str(dest)))
         self.start(work)
+    def open_editor_workspace(self):
+        p=filedialog.askdirectory(title='Select an existing workspace copy')
+        if not p: return
+        try:
+            b=locate(Path(p))
+            if '_workspace_' not in b.name:
+                raise ValueError('For safety, only open folders created by Create verified workspace. This prevents accidental edits to the original backup.')
+            manifest=plist(b/'Manifest.plist')
+            if manifest.get('IsEncrypted'): raise ValueError('Encrypted backups are currently read-only.')
+            validate_manifest(b,False)
+            self.editor_backup.set(str(b)); self.load_editor_files()
+        except Exception as e: messagebox.showerror(APP,str(e))
+
+    def load_editor_files(self):
+        backup=self.editor_backup.get().strip()
+        if not backup: messagebox.showwarning(APP,'Create or open a workspace first.'); return
+        query=self.editor_query.get()
+        def work():
+            rows=manifest_search_rows(backup,query)
+            self.q.put(('editor_rows',rows))
+            self.logmsg('Loaded '+str(len(rows))+' manifest file entries'+(' (showing up to 2,500).' if len(rows)>=2500 else '.'))
+        self.start(work)
+
+    def search_account_files(self):
+        self.editor_query.set('Accounts|AppleID|iCloud|MobileMe|CloudKit|Keychain')
+        self.load_editor_files()
+        self.logmsg('Account inventory is path-only. Credential databases, Keychain secrets and authentication tokens are not displayed or modified.')
+
+    def selected_editor_row(self):
+        sel=self.editor_list.curselection()
+        if not sel or sel[0]>=len(self.editor_rows):
+            messagebox.showwarning(APP,'Select a manifest file first.'); return None
+        return self.editor_rows[sel[0]]
+
+    def export_editor_file(self):
+        row=self.selected_editor_row()
+        if not row: return
+        backup=self.editor_backup.get()
+        try: payload=validate_editable_payload(backup,row)
+        except Exception as e: messagebox.showerror(APP,str(e)); return
+        dest=filedialog.asksaveasfilename(initialfile=Path(row['relativePath']).name)
+        if not dest: return
+        def work():
+            shutil.copy2(payload,dest)
+            self.logmsg('Exported '+row['domain']+'/'+row['relativePath']+' to '+dest)
+        self.start(work)
+
+    def replace_editor_file(self):
+        row=self.selected_editor_row()
+        if not row: return
+        backup=self.editor_backup.get()
+        try: payload=validate_editable_payload(backup,row)
+        except Exception as e: messagebox.showerror(APP,str(e)); return
+        replacement=filedialog.askopenfilename(title='Choose replacement file')
+        if not replacement: return
+        replacement=Path(replacement)
+        if replacement.stat().st_size!=payload.stat().st_size:
+            messagebox.showerror(APP,'Replacement must be exactly '+str(payload.stat().st_size)+' bytes. This editor does not rewrite manifest metadata.'); return
+        if not messagebox.askyesno(APP,'Replace this file in the workspace? The original source backup remains untouched. A rollback copy is saved outside the backup folder.'):
+            return
+        rollback=Path(backup).parent/(Path(backup).name+'.iosbg-rollback')
+        saved=rollback/row['fileID']
+        def work():
+            rollback.mkdir(parents=True,exist_ok=True)
+            if not saved.exists(): shutil.copy2(payload,saved)
+            temp=payload.with_name(payload.name+'.iosbg-tmp')
+            try:
+                shutil.copyfile(replacement,temp)
+                with open(temp,'rb+') as stream: os.fsync(stream.fileno())
+                if temp.stat().st_size!=payload.stat().st_size: raise RuntimeError('Replacement size changed during copy.')
+                os.replace(temp,payload)
+            finally:
+                if temp.exists(): temp.unlink()
+            self.logmsg('Replaced '+row['domain']+'/'+row['relativePath']+'; rollback saved at '+str(saved))
+        self.start(work)
+
+    def undo_editor_file(self):
+        row=self.selected_editor_row()
+        if not row: return
+        backup=Path(self.editor_backup.get())
+        try: payload=validate_editable_payload(backup,row)
+        except Exception as e: messagebox.showerror(APP,str(e)); return
+        saved=backup.parent/(backup.name+'.iosbg-rollback')/row['fileID']
+        if not saved.is_file():
+            messagebox.showinfo(APP,'No rollback copy exists for this file.'); return
+        if saved.stat().st_size!=payload.stat().st_size:
+            messagebox.showerror(APP,'Rollback copy size does not match the manifest entry.'); return
+        if not messagebox.askyesno(APP,'Restore the original bytes from the rollback copy?'): return
+        def work():
+            temp=payload.with_name(payload.name+'.iosbg-undo')
+            try:
+                shutil.copyfile(saved,temp); os.replace(temp,payload); saved.unlink()
+            finally:
+                if temp.exists(): temp.unlink()
+            self.logmsg('Restored original bytes for '+row['domain']+'/'+row['relativePath'])
+        self.start(work)
+
     def pathrow(self,f,r,label,var,cmd):
         ttk.Label(f,text=label).grid(row=r,column=0,sticky='w',pady=3); line=ttk.Frame(f); line.grid(row=r,column=1,sticky='ew'); line.columnconfigure(0,weight=1); ttk.Entry(line,textvariable=var).grid(row=0,column=0,sticky='ew'); ttk.Button(line,text='Browse',command=cmd).grid(row=0,column=1,padx=5)
     def pick_dir(self,var):
@@ -285,6 +385,10 @@ class Generator(tk.Tk):
                     self.devices=v; self.list.delete(0,'end')
                     for d in v: self.list.insert('end',f"{d['name']} | {d['product']} | iOS {d['version']} | {d['udid']}")
                 elif k=='done': self.status.configure(text=v)
+                elif k=='editor_backup': self.editor_backup.set(v); self.editor_query.set(''); self.load_editor_files()
+                elif k=='editor_rows':
+                    self.editor_rows=v; self.editor_list.delete(0,'end')
+                    for r in v: self.editor_list.insert('end',r['domain']+'  |  '+r['relativePath']+'  |  flags='+str(r['flags']))
         except queue.Empty: pass
         self.after(150,self.poll)
     def start(self,fn):
