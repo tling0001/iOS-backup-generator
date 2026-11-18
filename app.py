@@ -61,6 +61,29 @@ def validate_manifest(backup, encrypted):
 
 
 
+
+def build_archive_inventory(backup):
+    backup=locate(backup)
+    info=plist(backup/'Info.plist'); manifest=plist(backup/'Manifest.plist')
+    status=plist(backup/'Status.plist') if (backup/'Status.plist').exists() else {}
+    installed=sorted(set(info.get('Installed Applications',[]) or []))
+    info_apps=info.get('Applications',{}) if isinstance(info.get('Applications',{}),dict) else {}
+    os_apps=manifest.get('Applications',{}) if isinstance(manifest.get('Applications',{}),dict) else {}
+    terms=('AppleAccount','AppleID','AccountsUI','MobileMe','iCloud','CloudKit','FindMy')
+    account_services=sorted(k for k in os_apps if any(t.lower() in k.lower() for t in terms))
+    return {
+        'device': {'product_name':info.get('Product Name'),'product_type':info.get('Product Type'),'product_version':info.get('Product Version')},
+        'backup': {'format_version':manifest.get('Version'),'encrypted':bool(manifest.get('IsEncrypted')),'snapshot_state':status.get('SnapshotState'),'is_full_backup':status.get('IsFullBackup')},
+        'installed_applications':installed,
+        'application_metadata_bundle_ids':sorted(info_apps.keys()),
+        'os_application_component_bundle_ids':sorted(os_apps.keys()),
+        'apple_account_icloud_system_components':account_services,
+        'itunes_settings_keys':sorted((info.get('iTunes Settings') or {}).keys()) if isinstance(info.get('iTunes Settings'),dict) else [],
+        'itunes_files_keys':sorted((info.get('iTunes Files') or {}).keys()) if isinstance(info.get('iTunes Files'),dict) else [],
+        'note':'System component bundle IDs are OS inventory, not app installers. Account services do not reveal Apple Account credentials.'
+    }
+
+
 def manifest_search_rows(backup, query='', limit=2500):
     """Read indexed backup paths from an unencrypted native Manifest.db."""
     backup=locate(backup)
@@ -220,7 +243,9 @@ class Generator(tk.Tk):
         ttk.Button(f,text='Generate .mobileconfig',command=self.make_profile).grid(row=6,column=0,sticky='w',pady=12)
     def restore_ui(self):
         f=self.restore; f.columnconfigure(0,weight=1); self.pathrow(f,0,'Native backup folder or ZIP',self.source,lambda:self.pick_backup())
-        ttk.Button(f,text='Inspect backup metadata',command=self.inspect_dialog).grid(row=1,column=0,sticky='w',pady=6)
+        inspectbar=ttk.Frame(f); inspectbar.grid(row=1,column=0,sticky='w',pady=6)
+        ttk.Button(inspectbar,text='Inspect backup metadata',command=self.inspect_dialog).pack(side='left')
+        ttk.Button(inspectbar,text='Export full archive inventory…',command=self.export_archive_inventory).pack(side='left',padx=6)
         ttk.Label(f,text='Select target devices on the Devices tab. Restore replaces data. The source backup must be a genuine compatible device backup.',wraplength=850).grid(row=2,column=0,sticky='w',pady=6)
         ttk.Button(f,text='Restore source backup to selected devices…',command=self.restore_backups).grid(row=3,column=0,sticky='w')
     def editor_ui(self):
@@ -458,14 +483,19 @@ class Generator(tk.Tk):
         dest=Path(self.project.get()).expanduser()
         if dest.exists() and any(dest.iterdir()): dest=dest/(safe(self.project_name.get())+'_'+datetime.now().strftime('%Y%m%d_%H%M%S'))
         project_name=self.project_name.get(); model=self.model.get(); osver=self.osver.get(); apps=list(self.apps)
-        apple_email=self.apple_email.get().strip(); apple_label=self.apple_label.get().strip(); apple_mode=self.apple_account_mode.get()
+        apple_email=self.apple_email.get().strip(); apple_label=self.apple_label.get().strip(); apple_mode=self.apple_account_mode.get(); source_value=self.source.get().strip()
         def work():
             dest.mkdir(parents=True,exist_ok=True)
             (dest/'project.json').write_text(json.dumps({'name':project_name,'target_model':model,'target_os_version':osver,'created_utc':datetime.now(timezone.utc).isoformat()},indent=2))
             (dest/'apps.json').write_text(json.dumps({'apps':apps},indent=2))
             account={'email':apple_email,'label':apple_label,'handling':apple_mode,'credentials_included':False,'setup_required':apple_mode!='Leave Apple Account unchanged'}
             (dest/'apple_account_setup.json').write_text(json.dumps(account,indent=2))
-            (dest/'README.md').write_text('# '+project_name+'\n\nDeployment template only. It is not a synthetic Apple backup. Apple Account sign-in must be completed on each device. No credentials or tokens are included.\n')
+            if source_value:
+                b,tmp=self.resolve(source_value)
+                try: (dest/'archive_inventory.json').write_text(json.dumps(build_archive_inventory(b),indent=2,ensure_ascii=False),encoding='utf-8')
+                finally:
+                    if tmp: shutil.rmtree(tmp,ignore_errors=True)
+            (dest/'README.md').write_text('# '+project_name+'\n\nDeployment template only. It is not a synthetic Apple backup. Apple Account sign-in must be completed on each device. No credentials or tokens are included. Archive system components are inventory-only and are not installed by this project.\n')
             self.logmsg('Created deployment project: '+str(dest))
         self.start(work)
     def make_profile(self):
@@ -519,6 +549,20 @@ class Generator(tk.Tk):
                 shutil.rmtree(t,ignore_errors=True)
                 raise
         return locate(p),None
+    def export_archive_inventory(self):
+        source_value=self.source.get().strip()
+        if not source_value: messagebox.showwarning(APP,'Select a native backup folder or ZIP first.'); return
+        dest=filedialog.asksaveasfilename(defaultextension='.json',filetypes=[('JSON inventory','*.json')],initialfile='ios-backup-inventory.json')
+        if not dest: return
+        def work():
+            b,tmp=self.resolve(source_value)
+            try:
+                inventory=build_archive_inventory(b)
+                Path(dest).write_text(json.dumps(inventory,indent=2,ensure_ascii=False),encoding='utf-8')
+                self.logmsg('Exported full archive inventory: '+dest)
+            finally:
+                if tmp: shutil.rmtree(tmp,ignore_errors=True)
+
     def inspect_dialog(self):
         try:
             b,i,m,s=inspect(self.resolve()[0]); dbreport=validate_manifest(b,bool(m.get('IsEncrypted')))
