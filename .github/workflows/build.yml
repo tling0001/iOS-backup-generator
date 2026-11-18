@@ -51,8 +51,7 @@ jobs:
       - name: Compile and validate source
         run: |
           python -m py_compile app.py
-          python -m json.tool device_models.json > /dev/null
-          python -m json.tool archive_profiles.json > /dev/null
+          python -c "import json, pathlib; [json.loads(pathlib.Path(p).read_text(encoding='utf-8')) for p in ('device_models.json', 'archive_profiles.json')]"
 
       - name: Build standalone application
         shell: bash
