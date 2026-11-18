@@ -269,7 +269,7 @@ class Generator(tk.Tk):
         ttk.Label(f,text='Apple Account email / label (optional)').grid(row=9,column=0,sticky='w',pady=4); account=ttk.Frame(f); account.grid(row=9,column=1,sticky='ew')
         ttk.Entry(account,textvariable=self.apple_email).pack(side='left',fill='x',expand=True); ttk.Entry(account,textvariable=self.apple_label).pack(side='left',fill='x',expand=True,padx=(5,0))
         ttk.Label(f,text='Apple Account handling').grid(row=10,column=0,sticky='w',pady=4); ttk.Combobox(f,textvariable=self.apple_account_mode,values=['Sign in manually on each device','Leave Apple Account unchanged','Managed Apple Account via MDM'],state='readonly').grid(row=10,column=1,sticky='ew')
-        ttk.Label(f,text='No Apple Account passwords, 2FA codes, Keychain items or sign-in tokens are copied or stored. This is a deployment note only; sign in on each device using Apple’s own flow.',foreground='#805000',wraplength=900).grid(row=11,column=0,columnspan=2,sticky='w',pady=5)
+        ttk.Label(f,text='The optional email/label is saved as plain text in the project. No Apple Account passwords, 2FA codes, Keychain items or sign-in tokens are copied or stored. This is a deployment note only; sign in on each device using Apple’s own flow.',foreground='#805000',wraplength=900).grid(row=11,column=0,columnspan=2,sticky='w',pady=5)
         ttk.Label(f,text='Creates a deployment template, not a synthetic Finder backup. App bundle IDs do not install apps; use MDM or Apple Configurator for managed deployment. OS/model are planning values only.',wraplength=900).grid(row=12,column=0,columnspan=2,sticky='w',pady=5)
         ttk.Button(f,text='Create deployment project',command=self.create_project).grid(row=13,column=0,sticky='w')
     def profile_ui(self):
@@ -600,6 +600,7 @@ class Generator(tk.Tk):
                 self.logmsg('Exported full archive inventory: '+dest)
             finally:
                 if tmp: shutil.rmtree(tmp,ignore_errors=True)
+        self.start(work)
 
     def inspect_dialog(self):
         try:
@@ -607,8 +608,8 @@ class Generator(tk.Tk):
             app_records=m.get('Applications',{}) if isinstance(m.get('Applications',{}),dict) else {}
             account_terms=('AppleAccount','AppleID','AccountsUI','MobileMe','iCloud','CloudKit','FindMy')
             account_services=sorted(k for k in app_records if any(term.lower() in k.lower() for term in account_terms))
-            service_text='\\n'.join(account_services[:30]) if account_services else 'No matching service names found in readable Manifest.plist.'
-            messagebox.showinfo(APP,f"{i.get('Product Name')} ({i.get('Product Type')})\\niOS/iPadOS {i.get('Product Version')}\\nEncrypted: {m.get('IsEncrypted')}\\nManifest.db: {dbreport}\\nSnapshot: {s.get('SnapshotState')}\\nFull backup: {s.get('IsFullBackup')}\\nBackup format: {s.get('Version')}\\nInstalled apps: {len(i.get('Installed Applications',[]))}\\nOS application/component records: {len(app_records)}\\nApple Account / iCloud system components: {len(account_services)}\\n\\n{service_text}\\n\\nThe service inventory is OS metadata, not an Apple ID or login token. The supplied archives are marked IsFullBackup=false.")
+            service_text='\n'.join(account_services[:30]) if account_services else 'No matching service names found in readable Manifest.plist.'
+            messagebox.showinfo(APP,f"{i.get('Product Name')} ({i.get('Product Type')})\niOS/iPadOS {i.get('Product Version')}\nEncrypted: {m.get('IsEncrypted')}\nManifest.db: {dbreport}\nSnapshot: {s.get('SnapshotState')}\nFull backup: {s.get('IsFullBackup')}\nBackup format: {s.get('Version')}\nInstalled apps: {len(i.get('Installed Applications',[]))}\nOS application/component records: {len(app_records)}\nApple Account / iCloud system components: {len(account_services)}\n\n{service_text}\n\nThe service inventory is OS metadata, not an Apple ID or login token. The supplied archives are marked IsFullBackup=false.")
         except Exception as e: messagebox.showerror(APP,str(e))
     def restore_backups(self):
         ds=self.selected()
