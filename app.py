@@ -515,7 +515,12 @@ class Generator(tk.Tk):
         return locate(p),None
     def inspect_dialog(self):
         try:
-            b,i,m,s=inspect(self.resolve()[0]); dbreport=validate_manifest(b,bool(m.get('IsEncrypted'))); messagebox.showinfo(APP,f"{i.get('Product Name')} ({i.get('Product Type')})\niOS/iPadOS {i.get('Product Version')}\nEncrypted: {m.get('IsEncrypted')}\nManifest.db: {dbreport}\nSnapshot: {s.get('SnapshotState')}\nFull backup: {s.get('IsFullBackup')}\nBackup format: {s.get('Version')}\nInstalled apps: {len(i.get('Installed Applications',[]))}\n\nThe supplied archives are marked IsFullBackup=false.")
+            b,i,m,s=inspect(self.resolve()[0]); dbreport=validate_manifest(b,bool(m.get('IsEncrypted')))
+            app_records=m.get('Applications',{}) if isinstance(m.get('Applications',{}),dict) else {}
+            account_terms=('AppleAccount','AppleID','AccountsUI','MobileMe','iCloud','CloudKit','FindMy')
+            account_services=sorted(k for k in app_records if any(term.lower() in k.lower() for term in account_terms))
+            service_text='\\n'.join(account_services[:30]) if account_services else 'No matching service names found in readable Manifest.plist.'
+            messagebox.showinfo(APP,f"{i.get('Product Name')} ({i.get('Product Type')})\\niOS/iPadOS {i.get('Product Version')}\\nEncrypted: {m.get('IsEncrypted')}\\nManifest.db: {dbreport}\\nSnapshot: {s.get('SnapshotState')}\\nFull backup: {s.get('IsFullBackup')}\\nBackup format: {s.get('Version')}\\nInstalled apps: {len(i.get('Installed Applications',[]))}\\nApple Account / iCloud system components: {len(account_services)}\\n\\n{service_text}\\n\\nThe service inventory is OS metadata, not an Apple ID or login token. The supplied archives are marked IsFullBackup=false.")
         except Exception as e: messagebox.showerror(APP,str(e))
     def restore_backups(self):
         ds=self.selected()
