@@ -13,6 +13,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install encrypted-backup dependency
+        run: python -m pip install -r requirements.txt
+      - name: Verify decryption library imports
+        run: python -c "from iphone_backup_decrypt import EncryptedBackup; from iphone_backup_decrypt import utils; from Crypto.Cipher import AES; print('encrypted backup support imports successfully')"
       - name: Compile application
         run: python -m py_compile app.py
       - name: Validate JSON catalogs
