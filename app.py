@@ -779,6 +779,8 @@ class Generator(tk.Tk):
                 elif k=='editor_rows':
                     self.editor_rows=v; self.editor_list.delete(0,'end')
                     for r in v: self.editor_list.insert('end',r['domain']+'  |  '+r['relativePath']+'  |  flags='+str(r['flags']))
+                elif k=='editor_refresh':
+                    self.after(300,self.load_editor_files)
         except queue.Empty: pass
         self.after(150,self.poll)
     def start(self,fn):
@@ -802,8 +804,9 @@ class Generator(tk.Tk):
         def work():
             ds=[]; info_tool=self.info_tool.get().strip() or exe('ideviceinfo')
             if info_tool and not Path(info_tool).is_file():
-                self.logmsg('ideviceinfo path is not a file; device discovery will continue without detailed device information.')
-                info_tool=None
+                info_tool=shutil.which(info_tool)
+            if not info_tool:
+                self.logmsg('ideviceinfo is unavailable; device discovery will continue with generic device labels.')
             raw=subprocess.check_output([id_tool,'-l'],text=True,stderr=subprocess.STDOUT,timeout=20)
             for udid in [x.strip() for x in raw.splitlines() if x.strip()]:
                 d={'udid':udid,'name':'iOS device','product':'','version':''}
