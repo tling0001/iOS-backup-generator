@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """iOS Backup Generator — native backup and deployment-profile manager."""
 from __future__ import annotations
-import json, os, plistlib, queue, shutil, subprocess, threading, zipfile, tempfile, uuid, hashlib, sqlite3
+import json, os, plistlib, queue, shutil, subprocess, threading, zipfile, tempfile, uuid, hashlib, sqlite3, re
 from pathlib import Path
 from datetime import datetime, timezone
 import tkinter as tk
@@ -58,6 +58,83 @@ def validate_manifest(backup, encrypted):
     if encrypted:
         return {'kind':'encrypted opaque database','integrity':'not inspectable without decryption','size':db.stat().st_size}
     raise ValueError('Manifest.db is not SQLite and the backup is not marked encrypted.')
+
+
+
+def manifest_search_rows(backup, query='', limit=2500):
+    """Read indexed backup paths from an unencrypted native Manifest.db."""
+    backup=locate(backup)
+    manifest=plist(backup/'Manifest.plist')
+    if manifest.get('IsEncrypted'):
+        raise ValueError('This backup is encrypted. Its manifest and payloads are read-only.')
+    db=backup/'Manifest.db'
+    if (backup/'Manifest.db-wal').exists() or (backup/'Manifest.db-shm').exists():
+        raise ValueError('Manifest.db has WAL/SHM sidecars. Checkpoint it with an Apple-compatible backup tool before editing.')
+    validate_manifest(backup, False)
+    con=sqlite3.connect(db.resolve().as_uri()+'?mode=ro',uri=True)
+    try:
+        cols={r[1] for r in con.execute('PRAGMA table_info(Files)')}
+        if not {'fileID','domain','relativePath','flags','file'}.issubset(cols):
+            raise ValueError('Manifest.db Files table has an unsupported schema.')
+        q=(query or '').strip()
+        if q:
+            like='%'+q+'%'
+            rows=con.execute('SELECT fileID,domain,relativePath,flags,file FROM Files WHERE domain LIKE ? OR relativePath LIKE ? ORDER BY domain,relativePath LIMIT ?',(like,like,int(limit))).fetchall()
+        else:
+            rows=con.execute('SELECT fileID,domain,relativePath,flags,file FROM Files ORDER BY domain,relativePath LIMIT ?',(int(limit),)).fetchall()
+        return [{'fileID':r[0],'domain':r[1],'relativePath':r[2],'flags':r[3],'metadata':r[4]} for r in rows]
+    finally:
+        con.close()
+
+
+def payload_for_row(backup, row):
+    backup=locate(backup)
+    domain=str(row['domain']); relative=str(row['relativePath']); file_id=str(row['fileID'])
+    expected=hashlib.sha1((domain+'-'+relative).encode('utf-8')).hexdigest()
+    if file_id.lower()!=expected:
+        raise ValueError('Manifest fileID does not match its domain/path; refusing to touch this record.')
+    if not re.fullmatch(r'[0-9a-fA-F]{40}',file_id):
+        raise ValueError('Unsupported manifest fileID.')
+    payload=backup/file_id[:2]/file_id
+    if not payload.is_file():
+        raise ValueError('The indexed payload file is missing.')
+    return payload
+
+
+def metadata_values(node):
+    if isinstance(node,dict):
+        for key,value in node.items():
+            yield str(key),value
+            yield from metadata_values(value)
+    elif isinstance(node,(list,tuple)):
+        for value in node:
+            yield from metadata_values(value)
+
+
+def validate_editable_payload(backup, row):
+    backup=locate(backup)
+    manifest=plist(backup/'Manifest.plist')
+    if manifest.get('IsEncrypted'):
+        raise ValueError('Encrypted backup editing is disabled. The original backup remains unchanged.')
+    if int(row.get('flags',0))!=1:
+        raise ValueError('Only regular files can be replaced. Directories and symlinks are not editable.')
+    payload=payload_for_row(backup,row)
+    raw=row.get('metadata')
+    if not raw:
+        raise ValueError('Manifest file metadata is empty.')
+    try:
+        meta=plistlib.loads(raw)
+    except Exception as e:
+        raise ValueError('Could not decode this file metadata plist: '+str(e))
+    pairs=list(metadata_values(meta))
+    if any(k in ('EncryptionKey','ProtectionClassKey') for k,v in pairs):
+        raise ValueError('This file record contains encryption metadata; refusing to edit it.')
+    if any(k in ('Digest','DataHash') for k,v in pairs):
+        raise ValueError('This file record has a content digest that this editor cannot safely regenerate.')
+    sizes=[v for k,v in pairs if k in ('Size','FileLength') and isinstance(v,int)]
+    if sizes and any(int(v)!=payload.stat().st_size for v in sizes):
+        raise ValueError('Payload size disagrees with Manifest.db metadata.')
+    return payload
 
 
 class Generator(tk.Tk):
