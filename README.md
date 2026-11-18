@@ -26,7 +26,7 @@ The sanitized archive profiles include all app bundle IDs listed by each archive
 - Batch restore with basic device-family and OS preflight checks and `idevicebackup2 --copy` so the source backup is not modified by restore.
 - Generate deployment project app lists and basic Wi-Fi `.mobileconfig` profiles.
 - Record optional Apple Account email/label and whether each device should be signed in manually, left unchanged, or provisioned as a Managed Apple Account through MDM. No password, 2FA code, Keychain item, or authentication token is stored or copied.
-- Inspect the OS application/component inventory from readable `Manifest.plist`, including Apple Account, AppleID, AccountsUI, iCloud, CloudKit, MobileMe and Find My service identifiers.
+- Export a full sanitized archive inventory from readable `Info.plist`, `Manifest.plist` and `Status.plist`, including all installed-app IDs, app metadata IDs, OS component bundle IDs, Apple Account/iCloud service IDs, iTunes settings/file keys and backup compatibility flags. A selected source archive can also add this inventory to a deployment project.
 - Search unencrypted backup `Manifest.db` entries by domain/path, export selected regular files, and replace an existing payload only when its fileID, manifest metadata and exact byte length pass validation; save rollback copies outside the backup and support undo.
 
 ## Downloadable desktop builds
