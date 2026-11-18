@@ -409,7 +409,7 @@ class Generator(tk.Tk):
         ttk.Button(actions,text='Export selected…',command=self.export_editor_file).pack(side='left')
         ttk.Button(actions,text='Replace (same size)…',command=self.replace_editor_file).pack(side='left',padx=6)
         ttk.Button(actions,text='Undo replacement',command=self.undo_editor_file).pack(side='left')
-        ttk.Label(f,text='Encrypted workspaces can be unlocked, searched and decrypted for export. Same-size encrypted replacement reuses the existing per-file key and unchanged manifest metadata. Size changes and Manifest.db rewriting are not yet supported. Apple Account/Keychain secrets, directories, symlinks and unsupported records remain read-only.',foreground='#805000',wraplength=900,justify='left').grid(row=7,column=0,columnspan=2,sticky='w',pady=5)
+        ttk.Label(f,text='Encrypted workspaces can be unlocked, searched and decrypted for export. Encrypted regular files can be replaced with a new size: the app reuses the per-file key, updates the NSKeyedArchiver Size field in a decrypted Manifest.db copy, re-encrypts Manifest.db, and verifies both round trips. Only one size-changing edit may be pending before undo; Apple Account/Keychain secrets, directories, symlinks and unsupported records remain read-only.',foreground='#805000',wraplength=900,justify='left').grid(row=7,column=0,columnspan=2,sticky='w',pady=5)
     def pick_backup_into(self,var):
         p=filedialog.askdirectory()
         if p: var.set(p)
@@ -559,11 +559,16 @@ class Generator(tk.Tk):
             return
         rollback=Path(backup).parent/(Path(backup).name+'.iosbg-rollback')
         saved=rollback/(str(row['fileID'])+'.encrypted' if encrypted else str(row['fileID']))
-        saved_manifest=rollback/'Manifest.db.encrypted'
+        saved_manifest=rollback/(str(row['fileID'])+'.manifest.encrypted')
         def work():
             rollback.mkdir(parents=True,exist_ok=True)
             if encrypted:
                 from iphone_backup_decrypt import utils as backup_utils
+                if replacement.stat().st_size!=expected_size:
+                    pending=[p for p in rollback.glob('*.manifest.encrypted') if p.is_file()]
+                    own_manifest=rollback/(str(row['fileID'])+'.manifest.encrypted')
+                    if pending and not own_manifest.exists():
+                        raise RuntimeError('A different size-changing edit already has a pending Manifest.db rollback. Undo it first so metadata rollback order remains consistent.')
                 verify_old=rollback/(str(row['fileID'])+'.old-verify')
                 self.encrypted_backup._decrypt_file_to_disk(file_id=str(row['fileID']),key=key,file_plist=meta,output_filepath=str(verify_old))
                 if verify_old.stat().st_size!=expected_size:
