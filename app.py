@@ -436,7 +436,11 @@ class Generator(tk.Tk):
                 if original.stat().st_size != copied.stat().st_size or sha256_file(original)!=sha256_file(copied):
                     raise RuntimeError('Workspace byte verification failed for '+str(rel)+'; original remains untouched.')
             self.logmsg(f'Verified {len(source_files)} files byte-for-byte in workspace: '+str(dest))
-            self.logmsg('Original backup remains untouched. Workspace ready for supported unencrypted same-size file operations.'); self.q.put(('editor_backup',str(dest)))
+            self.logmsg('Original backup remains untouched. Verified workspace copy is ready for encrypted or unencrypted editing.')
+            if self.encrypted_backup:
+                self.encrypted_backup._cleanup()
+            self.encrypted_backup=None
+            self.q.put(('editor_backup',str(dest)))
         self.start(work)
     def open_editor_workspace(self):
         p=filedialog.askdirectory(title='Select an existing workspace copy')
@@ -452,15 +456,23 @@ class Generator(tk.Tk):
                     password=simpledialog.askstring(APP,'Enter the encrypted backup password (spaces are significant):',show='•',parent=self)
                 if password is None or password == '':
                     return
-                from iphone_backup_decrypt import EncryptedBackup
-                unlocked=EncryptedBackup(backup_directory=str(b),passphrase=password)
-                unlocked.test_decryption()
-                self.encrypted_backup=unlocked
-                self.logmsg('Encrypted backup keybag unlocked and Manifest.db decrypted in a temporary private working directory.')
+                def unlock():
+                    from iphone_backup_decrypt import EncryptedBackup
+                    unlocked=EncryptedBackup(backup_directory=str(b),passphrase=password)
+                    unlocked.test_decryption()
+                    if self.encrypted_backup:
+                        self.encrypted_backup._cleanup()
+                    self.encrypted_backup=unlocked
+                    self.logmsg('Encrypted backup keybag unlocked and Manifest.db decrypted in a temporary private working directory.')
+                    self.q.put(('editor_backup',str(b)))
+                    self.q.put(('editor_refresh',None))
+                self.start(unlock)
             else:
                 validate_manifest(b,False)
+                if self.encrypted_backup:
+                    self.encrypted_backup._cleanup()
                 self.encrypted_backup=None
-            self.editor_backup.set(str(b)); self.load_editor_files()
+                self.editor_backup.set(str(b)); self.load_editor_files()
         except Exception as e: messagebox.showerror(APP,str(e))
 
     def load_editor_files(self):
