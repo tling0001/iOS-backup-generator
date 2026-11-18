@@ -440,52 +440,139 @@ class Generator(tk.Tk):
         row=self.selected_editor_row()
         if not row: return
         backup=self.editor_backup.get()
-        try: payload=validate_editable_payload(backup,row)
-        except Exception as e: messagebox.showerror(APP,str(e)); return
+        encrypted=bool(self.encrypted_backup)
+        try:
+            if encrypted:
+                from iphone_backup_decrypt import utils as backup_utils
+                sensitive=('keychain','accounts','appleid','appleaccount','mobileme','icloud','cloudkit','identityservices')
+                if any(term in (str(row['domain'])+'/'+str(row['relativePath'])).lower() for term in sensitive):
+                    raise ValueError('Apple Account, iCloud, Keychain and authentication-related records are inventory-only.')
+                if int(row.get('flags',0))!=1:
+                    raise ValueError('Only regular files can be replaced.')
+                expected=hashlib.sha1((str(row['domain'])+'-'+str(row['relativePath'])).encode('utf-8')).hexdigest()
+                if str(row['fileID']).lower()!=expected:
+                    raise ValueError('Manifest fileID does not match its domain/path.')
+                meta=backup_utils.FilePlist(row['metadata'])
+                if meta.encryption_key is None:
+                    raise ValueError('This record has no per-file encryption key.')
+                if any(k in meta._data for k in ('Digest','DataHash')):
+                    raise ValueError('This record has a content digest that cannot safely be regenerated.')
+                key=self.encrypted_backup.keybag.unwrap_key_for_class(meta.protection_class,meta.encryption_key)
+                payload=Path(backup_utils.backup_file_path(backup,str(row['fileID'])))
+                expected_size=meta.filesize
+            else:
+                payload=validate_editable_payload(backup,row)
+                expected_size=payload.stat().st_size
+        except Exception as e:
+            messagebox.showerror(APP,str(e)); return
         replacement=filedialog.askopenfilename(title='Choose replacement file')
         if not replacement: return
         replacement=Path(replacement)
-        if replacement.stat().st_size!=payload.stat().st_size:
-            messagebox.showerror(APP,'Replacement must be exactly '+str(payload.stat().st_size)+' bytes. This editor does not rewrite manifest metadata.'); return
+        if replacement.stat().st_size!=expected_size:
+            messagebox.showerror(APP,'Replacement must be exactly '+str(expected_size)+' plaintext bytes. This editor does not rewrite Manifest.db metadata.'); return
         if not messagebox.askyesno(APP,'Replace this file in the workspace? The original source backup remains untouched. A rollback copy is saved outside the backup folder.'):
             return
         rollback=Path(backup).parent/(Path(backup).name+'.iosbg-rollback')
-        saved=rollback/row['fileID']
+        saved=rollback/(str(row['fileID'])+'.encrypted' if encrypted else str(row['fileID']))
         def work():
-            validate_replacement_payload(backup,row,replacement)
             rollback.mkdir(parents=True,exist_ok=True)
-            if not saved.exists(): shutil.copy2(payload,saved)
-            temp=payload.with_name(payload.name+'.iosbg-tmp')
-            try:
-                shutil.copyfile(replacement,temp)
-                with open(temp,'rb+') as stream: os.fsync(stream.fileno())
-                if temp.stat().st_size!=payload.stat().st_size: raise RuntimeError('Replacement size changed during copy.')
-                if sha256_file(temp)!=sha256_file(replacement): raise RuntimeError('Replacement file verification failed.')
-                os.replace(temp,payload)
-            finally:
-                if temp.exists(): temp.unlink()
-            self.logmsg('Replaced '+row['domain']+'/'+row['relativePath']+'; rollback saved at '+str(saved))
+            if encrypted:
+                # Authenticate the existing payload before preserving/replacing it.
+                verify=rollback/(str(row['fileID'])+'.verify')
+                self.encrypted_backup._decrypt_file_to_disk(file_id=str(row['fileID']),key=key,file_plist=meta,output_filepath=str(verify))
+                if verify.stat().st_size!=expected_size:
+                    raise RuntimeError('Existing encrypted payload size disagrees with Manifest.db; refusing replacement.')
+                verify.unlink()
+                if not saved.exists(): shutil.copy2(payload,saved)
+                from Crypto.Cipher import AES
+                from Crypto.Util.Padding import pad
+                cipher=AES.new(key,AES.MODE_CBC,iv=b'\\x00'*16)
+                encrypted_temp=payload.with_name(payload.name+'.iosbg-encrypted-tmp')
+                try:
+                    with open(replacement,'rb') as src, open(encrypted_temp,'wb') as dst:
+                        pending=b''
+                        while True:
+                            chunk=src.read(1024*1024)
+                            if not chunk: break
+                            pending+=chunk
+                            usable=(len(pending)//16)*16
+                            if usable:
+                                dst.write(cipher.encrypt(pending[:usable])); pending=pending[usable:]
+                        dst.write(cipher.encrypt(pad(pending,16)))
+                        dst.flush(); os.fsync(dst.fileno())
+                    if encrypted_temp.stat().st_size!=payload.stat().st_size:
+                        raise RuntimeError('Re-encrypted ciphertext length differs from the original; refusing replacement.')
+                    # Verify the newly encrypted bytes decrypt to the exact replacement before commit.
+                    check_cipher=AES.new(key,AES.MODE_CBC,iv=b'\\x00'*16)
+                    from Crypto.Util.Padding import unpad
+                    check_plain=rollback/(str(row['fileID'])+'.check')
+                    with open(encrypted_temp,'rb') as src, open(check_plain,'wb') as dst:
+                        pending=b''
+                        while True:
+                            chunk=src.read(1024*1024)
+                            if not chunk: break
+                            pending+=chunk
+                            usable=(len(pending)//16)*16
+                            if src.peek(1)==b'':
+                                # Keep the final block for PKCS#7 validation.
+                                usable=max(0,usable-16)
+                            if usable:
+                                dst.write(check_cipher.decrypt(pending[:usable])); pending=pending[usable:]
+                        if pending:
+                            dst.write(unpad(check_cipher.decrypt(pending),16))
+                    if sha256_file(check_plain)!=sha256_file(replacement):
+                        raise RuntimeError('Re-encryption verification failed; original encrypted payload was not changed.')
+                    check_plain.unlink()
+                    os.replace(encrypted_temp,payload)
+                finally:
+                    if encrypted_temp.exists(): encrypted_temp.unlink()
+            else:
+                validate_replacement_payload(backup,row,replacement)
+                if not saved.exists(): shutil.copy2(payload,saved)
+                temp=payload.with_name(payload.name+'.iosbg-tmp')
+                try:
+                    shutil.copyfile(replacement,temp)
+                    with open(temp,'rb+') as stream: os.fsync(stream.fileno())
+                    if temp.stat().st_size!=payload.stat().st_size: raise RuntimeError('Replacement size changed during copy.')
+                    if sha256_file(temp)!=sha256_file(replacement): raise RuntimeError('Replacement file verification failed.')
+                    os.replace(temp,payload)
+                finally:
+                    if temp.exists(): temp.unlink()
+            self.logmsg('Replaced '+row['domain']+'/'+row['relativePath']+(' with same-size encrypted payload; Manifest.db metadata unchanged' if encrypted else '')+'; rollback saved at '+str(saved))
         self.start(work)
 
     def undo_editor_file(self):
         row=self.selected_editor_row()
         if not row: return
         backup=Path(self.editor_backup.get())
-        try: payload=validate_editable_payload(backup,row)
-        except Exception as e: messagebox.showerror(APP,str(e)); return
-        saved=backup.parent/(backup.name+'.iosbg-rollback')/row['fileID']
+        encrypted=bool(self.encrypted_backup)
+        try:
+            if encrypted:
+                from iphone_backup_decrypt import utils as backup_utils
+                expected=hashlib.sha1((str(row['domain'])+'-'+str(row['relativePath'])).encode('utf-8')).hexdigest()
+                if str(row['fileID']).lower()!=expected or int(row.get('flags',0))!=1:
+                    raise ValueError('Unsupported encrypted manifest record.')
+                payload=Path(backup_utils.backup_file_path(str(backup),str(row['fileID'])))
+            else:
+                payload=validate_editable_payload(backup,row)
+        except Exception as e:
+            messagebox.showerror(APP,str(e)); return
+        saved=backup.parent/(backup.name+'.iosbg-rollback')/(str(row['fileID'])+'.encrypted' if encrypted else str(row['fileID']))
         if not saved.is_file():
             messagebox.showinfo(APP,'No rollback copy exists for this file.'); return
         if saved.stat().st_size!=payload.stat().st_size:
-            messagebox.showerror(APP,'Rollback copy size does not match the manifest entry.'); return
+            messagebox.showerror(APP,'Rollback copy size does not match the stored payload.'); return
         if not messagebox.askyesno(APP,'Restore the original bytes from the rollback copy?'): return
         def work():
             temp=payload.with_name(payload.name+'.iosbg-undo')
             try:
-                shutil.copyfile(saved,temp); os.replace(temp,payload); saved.unlink()
+                shutil.copyfile(saved,temp)
+                if sha256_file(temp)!=sha256_file(saved):
+                    raise RuntimeError('Rollback verification failed.')
+                os.replace(temp,payload); saved.unlink()
             finally:
                 if temp.exists(): temp.unlink()
-            self.logmsg('Restored original bytes for '+row['domain']+'/'+row['relativePath'])
+            self.logmsg('Restored original '+('encrypted ' if encrypted else '')+'bytes for '+row['domain']+'/'+row['relativePath'])
         self.start(work)
 
     def pathrow(self,f,r,label,var,cmd):
