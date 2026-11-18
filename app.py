@@ -452,11 +452,14 @@ class Generator(tk.Tk):
         dest=Path(self.project.get()).expanduser()
         if dest.exists() and any(dest.iterdir()): dest=dest/(safe(self.project_name.get())+'_'+datetime.now().strftime('%Y%m%d_%H%M%S'))
         project_name=self.project_name.get(); model=self.model.get(); osver=self.osver.get(); apps=list(self.apps)
+        apple_email=self.apple_email.get().strip(); apple_label=self.apple_label.get().strip(); apple_mode=self.apple_account_mode.get()
         def work():
             dest.mkdir(parents=True,exist_ok=True)
             (dest/'project.json').write_text(json.dumps({'name':project_name,'target_model':model,'target_os_version':osver,'created_utc':datetime.now(timezone.utc).isoformat()},indent=2))
             (dest/'apps.json').write_text(json.dumps({'apps':apps},indent=2))
-            (dest/'README.md').write_text('# '+project_name+'\n\nDeployment template only. It is not a synthetic Apple backup.\n')
+            account={'email':apple_email,'label':apple_label,'handling':apple_mode,'credentials_included':False,'setup_required':apple_mode!='Leave Apple Account unchanged'}
+            (dest/'apple_account_setup.json').write_text(json.dumps(account,indent=2))
+            (dest/'README.md').write_text('# '+project_name+'\n\nDeployment template only. It is not a synthetic Apple backup. Apple Account sign-in must be completed on each device. No credentials or tokens are included.\n')
             self.logmsg('Created deployment project: '+str(dest))
         self.start(work)
     def make_profile(self):
