@@ -310,6 +310,53 @@ def validate_editable_payload(backup, row):
     return payload
 
 
+class ToolTip:
+    """Small delayed hover help bubble for desktop controls."""
+    def __init__(self, widget, text):
+        self.widget=widget
+        self.text=text
+        self.window=None
+        self.after_id=None
+        widget.bind('<Enter>',self._schedule,add='+')
+        widget.bind('<Leave>',self._hide,add='+')
+        widget.bind('<ButtonPress>',self._hide,add='+')
+
+    def _schedule(self, _event=None):
+        self._hide()
+        self.after_id=self.widget.after(550,self._show)
+
+    def _show(self):
+        self.after_id=None
+        if self.window or not self.widget.winfo_exists():
+            return
+        try:
+            x=self.widget.winfo_rootx()+12
+            y=self.widget.winfo_rooty()+self.widget.winfo_height()+7
+            tip=tk.Toplevel(self.widget)
+            tip.wm_overrideredirect(True)
+            tip.wm_geometry(f'+{x}+{y}')
+            frame=tk.Frame(tip,background='#fffbe8',borderwidth=1,relief='solid')
+            frame.pack()
+            label=tk.Label(frame,text=self.text,justify='left',anchor='w',
+                           background='#fffbe8',foreground='#292929',
+                           font=('Segoe UI',9),wraplength=390,
+                           padx=10,pady=7)
+            label.pack()
+            self.window=tip
+        except tk.TclError:
+            self.window=None
+
+    def _hide(self, _event=None):
+        if self.after_id is not None:
+            try: self.widget.after_cancel(self.after_id)
+            except tk.TclError: pass
+            self.after_id=None
+        if self.window is not None:
+            try: self.window.destroy()
+            except tk.TclError: pass
+            self.window=None
+
+
 class Generator(tk.Tk):
     def __init__(self):
         super().__init__(); self.title(APP); self.geometry('1180x850'); self.minsize(980,700)
@@ -321,7 +368,7 @@ class Generator(tk.Tk):
         style.configure('TLabelframe.Label',font=('Segoe UI',10,'bold'))
         self.models=asset('device_models.json',{'models':[]})['models']; self.samples=asset('archive_profiles.json',{'profiles':[]})['profiles']
         self.q=queue.Queue(); self.worker=None; self.devices=[]; self.apps=[]; self.active_password=''
-        self.backup_tool=tk.StringVar(value=exe('idevicebackup2') or ''); self.id_tool=tk.StringVar(value=exe('idevice_id') or '')
+        self.backup_tool=tk.StringVar(value=exe('idevicebackup2') or ''); self.id_tool=tk.StringVar(value=exe('idevice_id') or ''); self.info_tool=tk.StringVar(value=exe('ideviceinfo') or '')
         self.out=tk.StringVar(value=str(Path.home()/'iOS Backups')); self.source=tk.StringVar(); self.password=tk.StringVar()
         self.model=tk.StringVar(value='iPad (10th generation) — iPad13,18'); self.osver=tk.StringVar(value='26.6.1')
         self.sample=tk.StringVar(value='All apps from both archives (merged)'); self.project=tk.StringVar(value=str(Path.home()/'iOS Deployment Projects'/'New Project'))
@@ -337,10 +384,27 @@ class Generator(tk.Tk):
         root=ttk.Frame(self,padding=12); root.pack(fill='both',expand=True)
         ttk.Label(root,text=APP,font=('Segoe UI',21,'bold')).pack(anchor='w')
         ttk.Label(root,text='Create genuine Apple backups, inspect supplied archives, select device models, and prepare repeatable deployment projects.',foreground='#555').pack(anchor='w',pady=(2,8))
-        tools=ttk.LabelFrame(root,text='libimobiledevice tools',padding=6); tools.pack(fill='x')
-        for i,(label,var) in enumerate([('idevicebackup2',self.backup_tool),('idevice_id',self.id_tool)]):
-            ttk.Label(tools,text=label).grid(row=i,column=0,sticky='w',padx=5,pady=3); ttk.Entry(tools,textvariable=var).grid(row=i,column=1,sticky='ew',padx=5); ttk.Button(tools,text='Browse',command=lambda v=var:self.pick_exe(v)).grid(row=i,column=2,padx=5)
+        tools=ttk.LabelFrame(root,text='Device connection tools — hover over a tool or path for help',padding=8); tools.pack(fill='x')
+        tool_help=[
+            ('idevicebackup2',self.backup_tool,
+             'Backup and restore engine. This is the libimobiledevice command that talks to the Apple mobile backup service. Select the idevicebackup2 executable. Use it to create native backups and restore a selected backup. Connect the device, unlock it, and tap Trust first. Restore overwrites device data.'),
+            ('idevice_id',self.id_tool,
+             'Device discovery. This command lists the UDIDs of iPhones and iPads visible over USB or supported network pairing. Select the idevice_id executable, then open the Devices tab and press Refresh to find connected devices.'),
+            ('ideviceinfo (optional)',self.info_tool,
+             'Device information reader. This optional command reads the device name, product/model identifier, and iOS version for the Devices list. If left blank, the app looks for ideviceinfo on PATH. It is not required to create a backup, but gives you more useful device details.')
+        ]
+        for i,(label,var,help_text) in enumerate(tool_help):
+            lab=ttk.Label(tools,text=label,width=23)
+            lab.grid(row=i,column=0,sticky='w',padx=5,pady=4)
+            entry=ttk.Entry(tools,textvariable=var)
+            entry.grid(row=i,column=1,sticky='ew',padx=5,pady=4)
+            browse=ttk.Button(tools,text='Browse…',command=lambda v=var:self.pick_exe(v))
+            browse.grid(row=i,column=2,padx=5,pady=3)
+            for widget in (lab,entry,browse):
+                ToolTip(widget,help_text)
         tools.columnconfigure(1,weight=1)
+        ttk.Label(root,text='Tip: hover over the tool names above for setup guidance. Executable paths are detected automatically when available.',
+                  foreground='#555',font=('Segoe UI',8)).pack(anchor='w',pady=(2,4))
         self.tabs=ttk.Notebook(root); self.tabs.pack(fill='both',expand=True,pady=8)
         self.dev=ttk.Frame(self.tabs,padding=10); self.create=ttk.Frame(self.tabs,padding=10); self.plan=ttk.Frame(self.tabs,padding=10); self.profile=ttk.Frame(self.tabs,padding=10); self.restore=ttk.Frame(self.tabs,padding=10); self.editor=ttk.Frame(self.tabs,padding=10)
         for f,t in [(self.dev,'Devices'),(self.create,'Create backup'),(self.plan,'Deployment project'),(self.profile,'Configuration profile'),(self.restore,'Inspect / restore'),(self.editor,'Safe workspace (copy only)')]: self.tabs.add(f,text=t)
@@ -734,9 +798,12 @@ class Generator(tk.Tk):
         if rc: raise RuntimeError(f'Command failed with exit code {rc}')
     def refresh(self):
         id_tool=self.id_tool.get()
-        if not id_tool or not Path(id_tool).exists(): self.logmsg('idevice_id not found. Install libimobiledevice and set the executable path.'); return
+        if not id_tool or not Path(id_tool).is_file(): self.logmsg('idevice_id not found. Install libimobiledevice and set its executable path in the tools section above.'); return
         def work():
-            ds=[]; info_tool=exe('ideviceinfo')
+            ds=[]; info_tool=self.info_tool.get().strip() or exe('ideviceinfo')
+            if info_tool and not Path(info_tool).is_file():
+                self.logmsg('ideviceinfo path is not a file; device discovery will continue without detailed device information.')
+                info_tool=None
             raw=subprocess.check_output([id_tool,'-l'],text=True,stderr=subprocess.STDOUT,timeout=20)
             for udid in [x.strip() for x in raw.splitlines() if x.strip()]:
                 d={'udid':udid,'name':'iOS device','product':'','version':''}
