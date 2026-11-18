@@ -20,14 +20,16 @@ The sanitized archive profiles include all app bundle IDs listed by each archive
 - Automatically preloads the merged app list from both supplied archives; individual archive profiles remain selectable.
 - Create native device backups with `idevicebackup2`; the device backup service creates the native `Manifest.db`.
 - Verify `Manifest.db` presence and size; run SQLite `quick_check` and expected-table checks when it is a readable SQLite database.
-- For encrypted backups, identify `Manifest.db` as opaque and preserve it byte-for-byte; no unsupported attempt is made to parse or rebuild encrypted database bytes.
+- Unlock encrypted iOS 13+ backups locally with the backup encryption password using `iphone_backup_decrypt`; decrypt the keybag and a temporary copy of `Manifest.db` for browsing and searching.
+- Decrypt and export selected encrypted regular files using their per-file protection-class keys. The source encrypted backup remains unchanged.
 - Inspect backup metadata, encryption, snapshot state, and full-backup flag.
 - Create an independent backup workspace and verify the complete file inventory and every copied file byte-for-byte against the source.
 - Batch restore with basic device-family and OS preflight checks and `idevicebackup2 --copy` so the source backup is not modified by restore.
 - Generate deployment project app lists and basic Wi-Fi `.mobileconfig` profiles.
 - Record optional Apple Account email/label and whether each device should be signed in manually, left unchanged, or provisioned as a Managed Apple Account through MDM. No password, 2FA code, Keychain item, or authentication token is stored or copied.
 - Export a full sanitized archive inventory from readable `Info.plist`, `Manifest.plist` and `Status.plist`, including all installed-app IDs, app metadata IDs, OS component bundle IDs, Apple Account/iCloud service IDs, iTunes settings/file keys and backup compatibility flags. A selected source archive can also add this inventory to a deployment project.
-- Search unencrypted backup `Manifest.db` entries by domain/path, export selected regular files, and replace an existing payload only when its fileID, manifest metadata and exact byte length pass validation; save rollback copies outside the backup and support undo.
+- Search encrypted or unencrypted backup `Manifest.db` entries by domain/path from a verified workspace. Export selected files as plaintext from encrypted backups; unencrypted backup export remains byte-preserving.
+- The encrypted editing stage is still deliberately limited: same-size replacement with the existing per-file key is being implemented separately; changing file sizes, regenerating file metadata and re-encrypting `Manifest.db` are not yet supported.
 
 ## Downloadable desktop builds
 
@@ -52,7 +54,7 @@ The packaged app does not need Python installed, but it still needs compatible l
 
 A valid Apple backup's `Manifest.db` is not a generic app list. It is generated as part of a real device backup and contains file/domain records tied to the payload files and backup metadata. For encrypted backups, the database is encrypted/opaque until processed with the appropriate backup decryption workflow. Fabricating a new SQLite database from bundle IDs or changing manifest rows without updating the corresponding payloads can produce a backup that looks plausible but cannot be restored.
 
-The app does not regenerate a native Manifest.db offline. It verifies the database created by `idevicebackup2`, and creates a separate workspace copy with full inventory and SHA-256 verification. For **unencrypted** backups only, the editor can search Manifest.db, export regular files, and replace an existing payload with a same-byte-length file when the fileID matches SHA-1(domain + '-' + relativePath), the payload size agrees with metadata, and no encryption key or content digest is present. It saves a rollback copy outside the backup and supports undo. It does not add/delete files, change file sizes, rewrite Manifest.db rows, or edit encrypted backups. Same-size replacement is a deliberately narrow first editing capability; validate it with a test restore before using it for important devices.
+The app does not fabricate a native Manifest.db. It verifies the database created by `idevicebackup2` and creates a separate workspace copy with full inventory and SHA-256 verification. For encrypted backups, `iphone_backup_decrypt` unlocks the keybag, decrypts Manifest.db to a temporary working file, and decrypts selected payloads for export. The original encrypted Manifest.db is never overwritten by this read/browse workflow. The current encrypted editor does not yet support changing file sizes, regenerating metadata or re-encrypting Manifest.db; test any resulting workspace on a spare device before production restore. Same-size replacement is a deliberately narrow first editing capability; validate it with a test restore before using it for important devices.
 
 The app list is a deployment-planning artifact only. Bundle IDs do not install apps. Use an authorized MDM/Apple Configurator workflow for actual app deployment and managed configuration.
 
