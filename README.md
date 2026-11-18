@@ -25,6 +25,9 @@ The sanitized archive profiles include all app bundle IDs listed by each archive
 - Create an independent backup workspace and verify the complete file inventory and every copied file byte-for-byte against the source.
 - Batch restore with basic device-family and OS preflight checks and `idevicebackup2 --copy` so the source backup is not modified by restore.
 - Generate deployment project app lists and basic Wi-Fi `.mobileconfig` profiles.
+- Record optional Apple Account email/label and whether each device should be signed in manually, left unchanged, or provisioned as a Managed Apple Account through MDM. No password, 2FA code, Keychain item, or authentication token is stored or copied.
+- Inspect the OS application/component inventory from readable `Manifest.plist`, including Apple Account, AppleID, AccountsUI, iCloud, CloudKit, MobileMe and Find My service identifiers.
+- Search unencrypted backup `Manifest.db` entries by domain/path, export selected regular files, and replace an existing payload only when its fileID, manifest metadata and exact byte length pass validation; save rollback copies outside the backup and support undo.
 
 ## Downloadable desktop builds
 
@@ -34,7 +37,7 @@ GitHub Actions builds standalone applications for:
 - macOS Intel (`.app`, x86_64)
 - macOS Apple Silicon (`.app`, arm64)
 
-Open the repository's **Actions → Build desktop applications** workflow and download the artifact matching your computer. Each build is self-contained and includes the app catalog JSON files. The workflow runs on pushes, pull requests, version tags, and manual dispatches. The macOS archive contains an `.app` bundle. These builds are unsigned; macOS may require approval in Privacy & Security before opening.
+Open the repository's **Actions → Build desktop applications** workflow and download the artifact matching your computer. Each build is self-contained and includes the app catalog JSON files. The workflow runs on pushes, pull requests, version tags, and manual dispatches. Pushing a version tag such as `v1.0.0` also automatically publishes a GitHub Release with all three platform archives attached. The macOS archive contains an `.app` bundle. These builds are unsigned; macOS may require approval in Privacy & Security before opening.
 
 ## Requirements and source launch
 
@@ -49,9 +52,13 @@ The packaged app does not need Python installed, but it still needs compatible l
 
 A valid Apple backup's `Manifest.db` is not a generic app list. It is generated as part of a real device backup and contains file/domain records tied to the payload files and backup metadata. For encrypted backups, the database is encrypted/opaque until processed with the appropriate backup decryption workflow. Fabricating a new SQLite database from bundle IDs or changing manifest rows without updating the corresponding payloads can produce a backup that looks plausible but cannot be restored.
 
-Accordingly, this version **does not claim to regenerate a native Manifest.db offline or perform arbitrary in-place payload edits**. It verifies the database created by `idevicebackup2`, and its workspace function makes an independent copy, compares the full file inventory and SHA-256 of every file, and leaves the original untouched. The workspace is a safe inspection/rollback boundary, not yet a general-purpose editor for changing app data inside an Apple backup. The UI intentionally blocks direct edits that could invalidate the manifest.
+The app does not regenerate a native Manifest.db offline. It verifies the database created by `idevicebackup2`, and creates a separate workspace copy with full inventory and SHA-256 verification. For **unencrypted** backups only, the editor can search Manifest.db, export regular files, and replace an existing payload with a same-byte-length file when the fileID matches SHA-1(domain + '-' + relativePath), the payload size agrees with metadata, and no encryption key or content digest is present. It saves a rollback copy outside the backup and supports undo. It does not add/delete files, change file sizes, rewrite Manifest.db rows, or edit encrypted backups. Same-size replacement is a deliberately narrow first editing capability; validate it with a test restore before using it for important devices.
 
 The app list is a deployment-planning artifact only. Bundle IDs do not install apps. Use an authorized MDM/Apple Configurator workflow for actual app deployment and managed configuration.
+
+### Apple Account / iCloud data
+
+The supplied archives' readable `Manifest.plist` files list Apple Account and related iOS system services, but the `Info.plist` files do not expose an Apple ID email address or credentials. The backups are encrypted, so account databases, Keychain records, 2FA material and sign-in tokens cannot be inspected or safely transplanted by this app. The project builder therefore stores only an optional email/label and per-device setup instruction. Apple Account authentication must be completed on each device; Managed Apple Accounts should be provisioned through an authorized MDM workflow. The editor can search account-related file paths in an unencrypted workspace, but intentionally refuses to display or modify credential stores.
 
 ## OS/model compatibility
 
