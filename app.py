@@ -335,9 +335,9 @@ class Generator(tk.Tk):
                     if family.startswith('iPhone') and not d.get('product','').startswith('iPhone'): raise ValueError('iPhone backup cannot be applied to a non-iPhone target.')
                 source_udid=str(i.get('Target Identifier') or i.get('Unique Identifier') or b.name)
                 for d in ds: self.run([backup_tool,'-u',d['udid'],'-s',source_udid,'restore','--copy',str(b.parent)])
-                if tmp: shutil.rmtree(tmp,ignore_errors=True)
             finally:
                 self.active_password=''
+                if 'tmp' in locals() and tmp: shutil.rmtree(tmp,ignore_errors=True)
         self.start(work)
 
 if __name__=='__main__':
