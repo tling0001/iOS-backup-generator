@@ -280,9 +280,10 @@ class Generator(tk.Tk):
         if not messagebox.askyesno(APP,f'Create native backups for {len(ds)} selected devices?'): return
         out=Path(self.out.get()).expanduser(); mode=self.enc.get()
         if mode!='Leave device setting unchanged' and not self.password.get(): messagebox.showerror(APP,'Enter the current/new backup password first.'); return
-        full=bool(self.full.get()); self.active_password=self.password.get(); backup_tool=self.backup_tool.get()
+        full=bool(self.full.get()); password=self.password.get(); backup_tool=self.backup_tool.get()
         def work():
             try:
+                self.active_password=password
                 out.mkdir(parents=True,exist_ok=True)
                 for d in ds:
                     folder=out/(safe(d['name'])+'_'+d['udid']+'_'+datetime.now().strftime('%Y%m%d_%H%M%S')); folder.mkdir()
@@ -319,9 +320,10 @@ class Generator(tk.Tk):
         ds=self.selected()
         if not ds or not self.source.get(): messagebox.showwarning(APP,'Select devices and a source backup.'); return
         if not messagebox.askyesno(APP,'Restore overwrites data on every selected device. Back up targets first. Continue?',icon='warning'): return
-        source_value=self.source.get(); password=self.password.get(); self.active_password=password; backup_tool=self.backup_tool.get()
+        source_value=self.source.get(); password=self.password.get(); backup_tool=self.backup_tool.get()
         def work():
             try:
+                self.active_password=password
                 b,tmp=self.resolve(source_value); _,i,m,s=inspect(b)
                 if s.get('SnapshotState')!='finished': raise ValueError('Source backup is not marked finished.')
                 if m.get('IsEncrypted') and not password: raise ValueError('Enter the source backup password.')
