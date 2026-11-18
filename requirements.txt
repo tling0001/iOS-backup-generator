@@ -1,1 +1,2 @@
-# Python standard library only. Tkinter must be included with the Python installation.
+# Tkinter is provided by the Python installation.
+iphone_backup_decrypt>=0.11.2
