@@ -119,6 +119,8 @@ def validate_editable_payload(backup, row):
     manifest=plist(backup/'Manifest.plist')
     if manifest.get('IsEncrypted'):
         raise ValueError('Encrypted backup editing is disabled. The original backup remains unchanged.')
+    if (backup/'Manifest.db-wal').exists() or (backup/'Manifest.db-shm').exists():
+        raise ValueError('Manifest.db WAL/SHM sidecars must be checkpointed before editing.')
     if int(row.get('flags',0))!=1:
         raise ValueError('Only regular files can be replaced. Directories and symlinks are not editable.')
     payload=payload_for_row(backup,row)
@@ -385,7 +387,7 @@ class Generator(tk.Tk):
                     self.devices=v; self.list.delete(0,'end')
                     for d in v: self.list.insert('end',f"{d['name']} | {d['product']} | iOS {d['version']} | {d['udid']}")
                 elif k=='done': self.status.configure(text=v)
-                elif k=='editor_backup': self.editor_backup.set(v); self.editor_query.set(''); self.load_editor_files()
+                elif k=='editor_backup': self.editor_backup.set(v); self.editor_query.set(''); self.editor_list.delete(0,'end')
                 elif k=='editor_rows':
                     self.editor_rows=v; self.editor_list.delete(0,'end')
                     for r in v: self.editor_list.insert('end',r['domain']+'  |  '+r['relativePath']+'  |  flags='+str(r['flags']))
@@ -520,7 +522,7 @@ class Generator(tk.Tk):
             account_terms=('AppleAccount','AppleID','AccountsUI','MobileMe','iCloud','CloudKit','FindMy')
             account_services=sorted(k for k in app_records if any(term.lower() in k.lower() for term in account_terms))
             service_text='\\n'.join(account_services[:30]) if account_services else 'No matching service names found in readable Manifest.plist.'
-            messagebox.showinfo(APP,f"{i.get('Product Name')} ({i.get('Product Type')})\\niOS/iPadOS {i.get('Product Version')}\\nEncrypted: {m.get('IsEncrypted')}\\nManifest.db: {dbreport}\\nSnapshot: {s.get('SnapshotState')}\\nFull backup: {s.get('IsFullBackup')}\\nBackup format: {s.get('Version')}\\nInstalled apps: {len(i.get('Installed Applications',[]))}\\nApple Account / iCloud system components: {len(account_services)}\\n\\n{service_text}\\n\\nThe service inventory is OS metadata, not an Apple ID or login token. The supplied archives are marked IsFullBackup=false.")
+            messagebox.showinfo(APP,f"{i.get('Product Name')} ({i.get('Product Type')})\\niOS/iPadOS {i.get('Product Version')}\\nEncrypted: {m.get('IsEncrypted')}\\nManifest.db: {dbreport}\\nSnapshot: {s.get('SnapshotState')}\\nFull backup: {s.get('IsFullBackup')}\\nBackup format: {s.get('Version')}\\nInstalled apps: {len(i.get('Installed Applications',[]))}\\nOS application/component records: {len(app_records)}\\nApple Account / iCloud system components: {len(account_services)}\\n\\n{service_text}\\n\\nThe service inventory is OS metadata, not an Apple ID or login token. The supplied archives are marked IsFullBackup=false.")
         except Exception as e: messagebox.showerror(APP,str(e))
     def restore_backups(self):
         ds=self.selected()
