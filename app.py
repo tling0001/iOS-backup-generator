@@ -587,10 +587,12 @@ class Generator(tk.Tk):
                         raise RuntimeError('Encrypted replacement failed plaintext round-trip verification.')
                     if replacement.stat().st_size!=expected_size:
                         manifest_temp,workdir=rewrite_encrypted_manifest_size(self.encrypted_backup,backup,row,replacement.stat().st_size,rollback)
-                        if not saved_manifest.exists(): shutil.copy2(old_manifest,saved_manifest)
-                    os.replace(temp_cipher,payload)
-                    if manifest_temp is not None:
+                    if manifest_temp is None:
+                        os.replace(temp_cipher,payload)
+                    else:
                         try:
+                            if not saved_manifest.exists(): shutil.copy2(old_manifest,saved_manifest)
+                            os.replace(temp_cipher,payload)
                             os.replace(manifest_temp,old_manifest)
                             derived_key=self.encrypted_backup.keybag.passphrase_key
                             self.encrypted_backup._cleanup()
@@ -600,7 +602,9 @@ class Generator(tk.Tk):
                             self.encrypted_backup=refreshed
                         except Exception:
                             shutil.copy2(saved,payload)
-                            if saved_manifest.exists(): shutil.copy2(saved_manifest,old_manifest)
+                            if saved_manifest.exists():
+                                shutil.copy2(saved_manifest,old_manifest)
+                                saved_manifest.unlink(missing_ok=True)
                             raise
                     self.q.put(('editor_refresh',None))
                 finally:
