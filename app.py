@@ -156,7 +156,8 @@ class Generator(tk.Tk):
         self.enc=tk.StringVar(value='Leave device setting unchanged'); self.full=tk.BooleanVar(value=True)
         self.profile_name=tk.StringVar(value='Fleet Configuration'); self.org=tk.StringVar(value='Organization'); self.profile_id=tk.StringVar(value='com.example.fleet.configuration')
         self.ssid=tk.StringVar(); self.wifi_pw=tk.StringVar(); self.security=tk.StringVar(value='WPA')
-        self.edit_source=tk.StringVar(); self.edit_dest=tk.StringVar(value=str(Path.home()/'iOS Backup Workspaces'))
+        self.edit_source=tk.StringVar(); self.edit_dest=tk.StringVar(value=str(Path.home()/'iOS Backup Workspaces')); self.editor_backup=tk.StringVar(); self.editor_query=tk.StringVar(); self.editor_rows=[]
+        self.apple_email=tk.StringVar(); self.apple_label=tk.StringVar(); self.apple_account_mode=tk.StringVar(value='Sign in manually on each device')
         self._ui(); self.after(150,self.poll); self.refresh()
 
     def _ui(self):
@@ -197,8 +198,12 @@ class Generator(tk.Tk):
         ttk.Label(f,text='Add bundle ID / optional App Store URL').grid(row=5,column=0,sticky='w',pady=5); line=ttk.Frame(f); line.grid(row=5,column=1,sticky='ew')
         ttk.Entry(line,textvariable=self.appid).pack(side='left',fill='x',expand=True); ttk.Entry(line,textvariable=self.appurl).pack(side='left',fill='x',expand=True,padx=5); ttk.Button(line,text='Add',command=self.add_app).pack(side='left')
         self.applist=tk.Listbox(f,height=8); self.applist.grid(row=7,column=0,columnspan=2,sticky='nsew',pady=5); ttk.Button(f,text='Remove selected',command=self.remove_app).grid(row=8,column=0,sticky='w')
-        ttk.Label(f,text='Creates a project template, not a synthetic Finder backup. App bundle IDs do not install apps; use MDM or Apple Configurator for managed deployment. OS/model are planning and compatibility values only.',wraplength=900).grid(row=9,column=0,columnspan=2,sticky='w',pady=8)
-        ttk.Button(f,text='Create deployment project',command=self.create_project).grid(row=10,column=0,sticky='w')
+        ttk.Label(f,text='Apple Account email / label (optional)').grid(row=9,column=0,sticky='w',pady=4); account=ttk.Frame(f); account.grid(row=9,column=1,sticky='ew')
+        ttk.Entry(account,textvariable=self.apple_email).pack(side='left',fill='x',expand=True); ttk.Entry(account,textvariable=self.apple_label).pack(side='left',fill='x',expand=True,padx=(5,0))
+        ttk.Label(f,text='Apple Account handling').grid(row=10,column=0,sticky='w',pady=4); ttk.Combobox(f,textvariable=self.apple_account_mode,values=['Sign in manually on each device','Leave Apple Account unchanged','Managed Apple Account via MDM'],state='readonly').grid(row=10,column=1,sticky='ew')
+        ttk.Label(f,text='No Apple Account passwords, 2FA codes, Keychain items or sign-in tokens are copied or stored. This is a deployment note only; sign in on each device using Apple’s own flow.',foreground='#805000',wraplength=900).grid(row=11,column=0,columnspan=2,sticky='w',pady=5)
+        ttk.Label(f,text='Creates a deployment template, not a synthetic Finder backup. App bundle IDs do not install apps; use MDM or Apple Configurator for managed deployment. OS/model are planning values only.',wraplength=900).grid(row=12,column=0,columnspan=2,sticky='w',pady=5)
+        ttk.Button(f,text='Create deployment project',command=self.create_project).grid(row=13,column=0,sticky='w')
     def profile_ui(self):
         f=self.profile; f.columnconfigure(1,weight=1)
         for i,(label,var) in enumerate([('Profile name',self.profile_name),('Organization',self.org),('Profile identifier',self.profile_id),('Wi-Fi SSID',self.ssid),('Wi-Fi password',self.wifi_pw)]):
