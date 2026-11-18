@@ -121,6 +121,9 @@ def validate_editable_payload(backup, row):
         raise ValueError('Encrypted backup editing is disabled. The original backup remains unchanged.')
     if (backup/'Manifest.db-wal').exists() or (backup/'Manifest.db-shm').exists():
         raise ValueError('Manifest.db WAL/SHM sidecars must be checkpointed before editing.')
+    sensitive_terms=('keychain','accounts','appleid','appleaccount','mobileme','icloud','cloudkit','identityservices','com.apple.account')
+    if any(term in (str(row.get('domain',''))+'/'+str(row.get('relativePath',''))).lower() for term in sensitive_terms):
+        raise ValueError('Apple Account, iCloud, Keychain and authentication-related records are inventory-only and cannot be exported or replaced by this editor.')
     if int(row.get('flags',0))!=1:
         raise ValueError('Only regular files can be replaced. Directories and symlinks are not editable.')
     payload=payload_for_row(backup,row)
@@ -338,6 +341,7 @@ class Generator(tk.Tk):
                 shutil.copyfile(replacement,temp)
                 with open(temp,'rb+') as stream: os.fsync(stream.fileno())
                 if temp.stat().st_size!=payload.stat().st_size: raise RuntimeError('Replacement size changed during copy.')
+                if sha256_file(temp)!=sha256_file(replacement): raise RuntimeError('Replacement file verification failed.')
                 os.replace(temp,payload)
             finally:
                 if temp.exists(): temp.unlink()
