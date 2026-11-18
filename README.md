@@ -37,7 +37,7 @@ GitHub Actions builds standalone applications for:
 - macOS Intel (`.app`, x86_64)
 - macOS Apple Silicon (`.app`, arm64)
 
-Open the repository's **Actions → Build desktop applications** workflow and download the artifact matching your computer. Each build is self-contained and includes the app catalog JSON files. The workflow runs on pushes, pull requests, version tags, and manual dispatches. Pushing a version tag such as `v1.0.0` also automatically publishes a GitHub Release with all three platform archives attached. The macOS archive contains an `.app` bundle. These builds are unsigned; macOS may require approval in Privacy & Security before opening.
+Open the repository's **Actions → Build desktop applications** workflow and download the artifact matching your computer. Each build is self-contained and includes the app catalog JSON files. The workflow runs on pushes, pull requests, version tags, and manual dispatches. Pushing a version tag such as `v1.0.0` automatically publishes a GitHub Release with all three platform archives attached. To publish a release, create and push a version tag: `git tag v1.0.0` followed by `git push origin v1.0.0`. The macOS archive contains an `.app` bundle. These builds are unsigned; macOS may require approval in Privacy & Security before opening.
 
 ## Requirements and source launch
 
@@ -58,7 +58,7 @@ The app list is a deployment-planning artifact only. Bundle IDs do not install a
 
 ### Apple Account / iCloud data
 
-The supplied archives' readable `Manifest.plist` files list Apple Account and related iOS system services, but the `Info.plist` files do not expose an Apple ID email address or credentials. The backups are encrypted, so account databases, Keychain records, 2FA material and sign-in tokens cannot be inspected or safely transplanted by this app. The project builder therefore stores only an optional email/label and per-device setup instruction. Apple Account authentication must be completed on each device; Managed Apple Accounts should be provisioned through an authorized MDM workflow. The editor can search account-related file paths in an unencrypted workspace, but intentionally refuses to display or modify credential stores.
+The supplied archives' readable `Manifest.plist` files list Apple Account and related iOS system services, but the `Info.plist` files do not expose an Apple ID email address or credentials. The backups are encrypted, so account databases, Keychain records, 2FA material and sign-in tokens cannot be inspected or safely transplanted by this app. The project builder therefore stores only an optional email/label (as plain text in the project folder) and per-device setup instruction. Apple Account authentication must be completed on each device; Managed Apple Accounts should be provisioned through an authorized MDM workflow. The editor can search account-related file paths in an unencrypted workspace, but intentionally refuses to display or modify credential stores.
 
 ## OS/model compatibility
 
