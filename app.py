@@ -504,9 +504,14 @@ class Generator(tk.Tk):
         try:
             if self.encrypted_backup:
                 from iphone_backup_decrypt import utils as backup_utils
+                sensitive=('keychain','accounts','appleid','appleaccount','mobileme','icloud','cloudkit','identityservices')
+                if any(term in (str(row['domain'])+'/'+str(row['relativePath'])).lower() for term in sensitive):
+                    raise ValueError('Apple Account, iCloud, Keychain and authentication-related records are inventory-only.')
                 meta=backup_utils.FilePlist(row['metadata'])
                 if meta.encryption_key is None or int(row.get('flags',0))!=1:
                     raise ValueError('Selected record is not an encrypted regular file.')
+                if any(k in meta._data for k in ('Digest','DataHash')):
+                    raise ValueError('This record contains an unsupported content digest.')
                 key=self.encrypted_backup.keybag.unwrap_key_for_class(meta.protection_class,meta.encryption_key)
                 payload=Path(backup_utils.backup_file_path(backup,row['fileID']))
             else:
